@@ -193,5 +193,29 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
 
             Assert.Equal(6, raceResults.Count);
         }
+
+        [Fact]
+        public async Task LocalDate_ContainedByConstantDates()
+        {
+            var dates = new[]{ new LocalDate(2019, 1, 1), new LocalDate(2019, 2, 1) };
+            var raceResults = await this.Db.Race.Where(r => EF.Constant(dates).Contains(r.Date)).ToListAsync();
+            Assert.Equal(
+                condense($"{RaceSelectStatement} WHERE [r].[Date] IN ('2019-01-01', '2019-02-01')"),
+                condense(this.Db.Sql));
+
+            Assert.Equal(2, raceResults.Count);
+        }
+
+        [Fact]
+        public async Task LocalDate_ContainedByParameterDates()
+        {
+            var dates = new[]{ new LocalDate(2019, 1, 1), new LocalDate(2019, 2, 1) };
+            var raceResults = await this.Db.Race.Where(r => EF.Parameter(dates).Contains(r.Date)).ToListAsync();
+            Assert.Equal(
+                condense($"{RaceSelectStatement} WHERE -- TODO WRITE ME WHEN QUERY IS FIXED"),
+                condense(this.Db.Sql));
+
+            Assert.Equal(2, raceResults.Count);
+        }
     }
 }
