@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls /tmp/)",
+      "Bash(mkdir -p /tmp/eftest)",
+      "Bash(git *)"
+    ]
+  }
+}

@@ -14,7 +14,7 @@
     <RepositoryUrl>https://github.com/StevenRasmussen/EFCore.SqlServer.NodaTime</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>Entity Framework Core;entity-framework-core;EF;Data;O/RM;EntityFrameworkCore;EFCore;Noda;NodaTime;Noda Time</PackageTags>
-    <Version>10.0.0</Version>
+    <Version>10.0.1</Version>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 

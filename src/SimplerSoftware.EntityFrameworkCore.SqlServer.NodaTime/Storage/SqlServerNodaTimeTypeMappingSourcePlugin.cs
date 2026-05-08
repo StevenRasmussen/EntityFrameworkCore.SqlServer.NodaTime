@@ -60,8 +60,12 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
             {
                 if (StoreTypeMappings.TryGetValue(storeTypeName, out var mappings))
                 {
+                    // When clrType is null, defer to EF Core's default mapping source: our store
+                    // types (datetime, datetime2, etc.) all have non-NodaTime defaults that EF
+                    // can supply. Returning a NodaTime mapping here pollutes plain DateTime
+                    // expressions like DateTime.UtcNow with InstantValueConverter.
                     if (clrType == null)
-                        return mappings[0];
+                        return null;
 
                     foreach (var m in mappings)
                         if (m.ClrType == clrType)
@@ -73,7 +77,7 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
                 if (StoreTypeMappings.TryGetValue(storeTypeNameBase!, out mappings))
                 {
                     if (clrType == null)
-                        return mappings[0].Clone(mappingInfo);
+                        return null;
 
                     foreach (var m in mappings)
                         if (m.ClrType == clrType)
