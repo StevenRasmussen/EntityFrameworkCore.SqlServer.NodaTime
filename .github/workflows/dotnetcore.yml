@@ -12,8 +12,9 @@ jobs:
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
-        dotnet-version: 10.0.x
+        dotnet-version: 11.0.x
+        dotnet-quality: preview
     - name: Build with dotnet
       run: dotnet build "./src/SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.sln" --configuration Release
-    # name: Execute Tests
-    # run: dotnet test "./src/SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests/SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.csproj" --configuration Release
+    - name: Execute offline tests (LocalDB integration tests are Windows-only)
+      run: dotnet test "./src/SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests/SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.csproj" --configuration Release --filter "Category=Offline"
