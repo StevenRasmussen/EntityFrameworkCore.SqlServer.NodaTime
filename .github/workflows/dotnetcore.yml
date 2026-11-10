@@ -13,7 +13,6 @@ jobs:
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: 11.0.x
-        dotnet-quality: preview
     - name: Build with dotnet
       run: dotnet build "./src/SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.sln" --configuration Release
     - name: Execute offline tests (LocalDB integration tests are Windows-only)
