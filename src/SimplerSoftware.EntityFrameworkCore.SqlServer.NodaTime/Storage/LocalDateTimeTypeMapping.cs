@@ -1,5 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.EntityFrameworkCore.Storage.Json;
 using NodaTime;
+using System;
 using SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage;
 using DateTimeTypeMapping = SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage.DateTimeTypeMapping;
 
@@ -16,9 +18,14 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Storage
         public static LocalDateTimeTypeMapping Default { get; } = new(SqlServerDateTimeTypes.DateTime2);
 
         public LocalDateTimeTypeMapping(string storeType)
-            : base(storeType, typeof(LocalDateTime), new LocalDateTimeValueConverter())
+            : base(storeType, typeof(LocalDateTime), new LocalDateTimeValueConverter(), CreateJsonValueReaderWriter())
         {
         }
+
+        // EF Core needs a JSON reader/writer to handle collections of LocalDateTime, e.g. list.Contains(x.LocalDateTime) (#41).
+        // This produces the same JSON that EF Core uses for a DateTime property with a LocalDateTimeValueConverter.
+        private static JsonValueReaderWriter CreateJsonValueReaderWriter()
+            => new JsonConvertedValueReaderWriter<LocalDateTime, DateTime>(JsonDateTimeReaderWriter.Instance, new LocalDateTimeValueConverter());
 
         protected LocalDateTimeTypeMapping(RelationalTypeMappingParameters parameters)
             : base(parameters)

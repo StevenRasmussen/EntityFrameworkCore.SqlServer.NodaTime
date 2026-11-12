@@ -15,8 +15,10 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Storage
         /// </summary>
         public static InstantTypeMapping Default { get; } = new(SqlServerDateTimeTypes.DateTime2);
 
+        // EF Core needs a JSON reader/writer to handle collections of Instant, e.g. list.Contains(x.Instant) (#41).
+        // Unlike the other types, Instant has its own so that numeric offsets in JSON are read correctly.
         public InstantTypeMapping(string storeType)
-            : base(storeType, typeof(Instant), new InstantValueConverter())
+            : base(storeType, typeof(Instant), new InstantValueConverter(), JsonInstantReaderWriter.Instance)
         {
         }
 

@@ -1,5 +1,6 @@
 ﻿using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.EntityFrameworkCore.Storage.Json;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using System;
 using System.Data;
@@ -26,7 +27,12 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
         };
 
         protected DateTimeTypeMapping(string storeType, Type clrType, ValueConverter valueConverter)
-            : base(CreateRelationalTypeMappingParameters(storeType, clrType, valueConverter))
+            : this(storeType, clrType, valueConverter, jsonValueReaderWriter: null)
+        {
+        }
+
+        protected DateTimeTypeMapping(string storeType, Type clrType, ValueConverter valueConverter, JsonValueReaderWriter jsonValueReaderWriter)
+            : base(CreateRelationalTypeMappingParameters(storeType, clrType, valueConverter, jsonValueReaderWriter))
         {
         }
 
@@ -35,12 +41,13 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
         {
         }
 
-        private static RelationalTypeMappingParameters CreateRelationalTypeMappingParameters(string storeType, Type clrType, ValueConverter valueConverter)
+        private static RelationalTypeMappingParameters CreateRelationalTypeMappingParameters(string storeType, Type clrType, ValueConverter valueConverter, JsonValueReaderWriter jsonValueReaderWriter)
         {
             return new RelationalTypeMappingParameters(
                 new CoreTypeMappingParameters(
                     clrType,
-                    valueConverter),
+                    valueConverter,
+                    jsonValueReaderWriter: jsonValueReaderWriter),
                 storeType,
                 StoreTypePostfix.Precision,
                 storeType == SqlServerDateTimeTypes.DateTime2 ? System.Data.DbType.DateTime2 : System.Data.DbType.DateTime);

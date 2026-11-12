@@ -28,12 +28,19 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
 
         public DbSet<RaceSplit> RaceSplit { get; set; }
 
+        public DbSet<NodaTimeCollections> NodaTimeCollections { get; set; }
+
         public string Sql => _loggerFactory.Logger.Sql;
 
         protected override void OnConfiguring(DbContextOptionsBuilder options) => options.UseLoggerFactory(_loggerFactory);
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
+            // The list properties need no configuration; EF Core maps them to JSON arrays by convention.
+            // No seed data: the tests insert their own rows inside a transaction that is rolled back.
+            modelBuilder.Entity<NodaTimeCollections>()
+                .ComplexProperty(x => x.Json, b => b.ToJson());
+
             modelBuilder.Entity<SupportedNodaTypes>()
                 .HasData(
                     CreateSupportedNodaTypes(1, withNullables: true),
