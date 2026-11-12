@@ -109,6 +109,33 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
             Assert.Equal(7, raceResults.Count);
         }
 
+        /// <summary>DATEPART(day, ...) is invalid for a time column, which is what Days used to translate to.</summary>
+        [Fact]
+        public async Task Duration_Days()
+        {
+            var raceResults = await this.Db.Race.Where(r => r.ScheduledDuration.Days == 0).ToListAsync();
+
+            Assert.Equal(
+                condense(@$"{RaceSelectStatement} WHERE DATEDIFF(day, '19000101', [r].[ScheduledDuration]) = 0"),
+                condense(this.Db.Sql));
+
+            // A time column holds less than 24 hours, so every duration has 0 whole days.
+            Assert.Equal(12, raceResults.Count);
+        }
+
+        /// <summary>TypeResults row 1 has DurationNull = 90 minutes; row 2 has NULL, which must not match.</summary>
+        [Fact]
+        public async Task Duration_Days_of_nullable_duration()
+        {
+            var ids = await this.Db.TypeResults.Where(t => t.DurationNull.Value.Days == 0).Select(t => t.Id).ToListAsync();
+
+            Assert.Equal(
+                condense("SELECT [t].[Id] FROM [TypeResults] AS [t] WHERE DATEDIFF(day, '19000101', [t].[DurationNull]) = 0"),
+                condense(this.Db.Sql));
+
+            Assert.Equal([1], ids);
+        }
+
         [Fact]
         public async Task Duration_DatePart_Hour()
         {
