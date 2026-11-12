@@ -10,7 +10,8 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
         {
             Translators = new IMethodCallTranslator[]
             {
-                new LocalDateMethodTranslator(sqlExpressionFactory)
+                new LocalDateMethodTranslator(sqlExpressionFactory),
+                new LocalDateTimeCombineTranslator(sqlExpressionFactory),
             };
         }
 

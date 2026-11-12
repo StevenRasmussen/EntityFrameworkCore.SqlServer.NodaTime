@@ -47,6 +47,10 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
                 {
                     return _sqlExpressionFactory.Convert(instance, typeof(LocalDate));
                 }
+                else if (member.Name == nameof(LocalDateTime.TimeOfDay) && returnType == typeof(LocalTime))
+                {
+                    return _sqlExpressionFactory.Convert(instance, typeof(LocalTime));
+                }
             }
 
             return null;
