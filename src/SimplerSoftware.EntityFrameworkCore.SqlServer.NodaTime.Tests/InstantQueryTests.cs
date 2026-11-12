@@ -28,6 +28,19 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         }
 
         [Fact]
+        public async Task Instant_can_be_used_in_query_with_parameter()
+        {
+            var startTime = Instant.FromUtc(2019, 7, 1, 1, 0);
+            var raceResults = await this.Db.RaceResult.Where(r => r.StartTime >= startTime).ToListAsync();
+
+            Assert.Equal(
+               condense(@$"{RaceResultSelectStatement} WHERE [r].[StartTime] >= @startTime"),
+               condense(this.Db.Sql));
+
+            Assert.Equal(6, raceResults.Count);
+        }
+
+        [Fact]
         public async Task Instant_EnsurePrecisionIsSavedCorrectly()
         {
             using var transaction = await this.Db.Database.BeginTransactionAsync();

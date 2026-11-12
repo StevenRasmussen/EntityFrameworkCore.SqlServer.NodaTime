@@ -25,6 +25,19 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         }
 
         [Fact]
+        public async Task LocalTime_can_be_used_in_query_with_parameter()
+        {
+            var startTime = new LocalTime(14, 0, 0);
+            var raceResults = await this.Db.Race.Where(r => r.ScheduledStartTime >= startTime).ToListAsync();
+
+            Assert.Equal(
+                condense(@$"{RaceSelectStatement} WHERE [r].[ScheduledStartTime] >= @startTime"),
+                condense(this.Db.Sql));
+
+            Assert.Equal(6, raceResults.Count);
+        }
+
+        [Fact]
         public async Task LocalTime_PlusHours()
         {
             var raceResults = await this.Db.Race.Where(r => r.ScheduledStartTime.PlusHours(2) >= new LocalTime(12, 0, 0)).ToListAsync();

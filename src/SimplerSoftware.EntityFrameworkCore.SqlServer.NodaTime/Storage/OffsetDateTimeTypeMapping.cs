@@ -38,7 +38,9 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Storage
                 new CoreTypeMappingParameters(
                     typeof(OffsetDateTime),
                     new OffsetDateTimeValueConverter()),
-                SqlServerDateTimeTypes.DateTimeOffset);
+                SqlServerDateTimeTypes.DateTimeOffset,
+                // Without this, HasPrecision(n) is ignored and the column is always datetimeoffset(7).
+                StoreTypePostfix.Precision);
         }
 
         /// <summary>

@@ -20,7 +20,7 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
 
         public DbSet<SupportedNodaTypes> TypeResults { get; set; }
 
-        public DbSet<LessPreciseRaceResult> LessPreciseRaceResults { get; set; }
+        public DbSet<PrecisionNodaTypes> PrecisionTypes { get; set; }
 
         public DbSet<Race> Race { get; set; }
 
@@ -34,6 +34,36 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
+            modelBuilder.Entity<SupportedNodaTypes>()
+                .HasData(
+                    CreateSupportedNodaTypes(1, withNullables: true),
+                    CreateSupportedNodaTypes(2, withNullables: false));
+
+            modelBuilder.Entity<PrecisionNodaTypes>(entity =>
+            {
+                entity.Property(x => x.InstantAsDateTime).HasColumnType("datetime");
+                entity.Property(x => x.InstantAsSmallDateTime).HasColumnType("smalldatetime");
+                entity.Property(x => x.InstantAsDateTime2Of0).HasColumnType("datetime2(0)");
+                entity.Property(x => x.InstantWithPrecision3).HasPrecision(3);
+
+                entity.Property(x => x.LocalDateTimeAsDateTime).HasColumnType("datetime");
+                entity.Property(x => x.LocalDateTimeAsSmallDateTime).HasColumnType("smalldatetime");
+                entity.Property(x => x.LocalDateTimeAsDateTime2Of0).HasColumnType("datetime2(0)");
+                entity.Property(x => x.LocalDateTimeWithPrecision3).HasPrecision(3);
+
+                entity.Property(x => x.OffsetDateTimeAsDateTimeOffsetOf3).HasColumnType("datetimeoffset(3)");
+                entity.Property(x => x.OffsetDateTimeWithPrecision2).HasPrecision(2);
+
+                entity.Property(x => x.LocalTimeAsTimeOf3).HasColumnType("time(3)");
+                entity.Property(x => x.LocalTimeWithPrecision2).HasPrecision(2);
+                entity.Property(x => x.DurationAsTimeOf3).HasColumnType("time(3)");
+                entity.Property(x => x.DurationWithPrecision2).HasPrecision(2);
+
+                entity.HasData(
+                    CreatePrecisionNodaTypes(1, new LocalDateTime(2019, 1, 1, 8, 0)),
+                    CreatePrecisionNodaTypes(2, new LocalDateTime(2019, 7, 1, 14, 30)));
+            });
+
             modelBuilder.Entity<Race>()
                 .HasData(
                     new Race { Id = 1, Date = new LocalDate(2019, 1, 1), DateTimeDate = new DateTime(2019, 1, 1), ScheduledStartTime = new LocalTime(8, 0, 0, 0), ScheduledDuration = DurationExtensions.FromParts(1, 0, 0, 0), ScheduledStart = new LocalDateTime(2019, 1, 1, 8, 0, 0, 0) },
@@ -79,5 +109,42 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
                     new RaceSplit { Id = 9, TimeStampInstant = InstantExtensions.FromParts(2020, 1, 1, 9, 9, 9, 9, 9, 9), TimeStampLocalDateTime = LocalDateTimeExtensions.FromParts(2020, 1, 1, 9, 9, 9, 9, 9, 9), TimeStampLocalTime = LocalTimeExtensions.FromParts(9, 9, 9, 9, 9, 900), TimeStampOffsetDateTime = OffsetDateTimeExtensions.FromParts(2020, 1, 1, 9, 9, 9, 9, 9, 900, 300) }
                 );
         }
+
+        /// <summary>Row 1 has every nullable property populated; row 2 has every nullable property null.</summary>
+        private static SupportedNodaTypes CreateSupportedNodaTypes(int id, bool withNullables) => new SupportedNodaTypes
+        {
+            Id = id,
+            DurationNonNull = Duration.FromHours(1),
+            DurationNull = withNullables ? Duration.FromMinutes(90) : null,
+            InstantNonNull = Instant.FromUtc(2019, 7, 1, 1, 0),
+            InstantNull = withNullables ? Instant.FromUtc(2020, 2, 29, 12, 30) : null,
+            LocalDateNonNull = new LocalDate(2019, 7, 1),
+            LocalDateNull = withNullables ? new LocalDate(2000, 2, 29) : null,
+            LocalDateTimeNonNull = new LocalDateTime(2019, 7, 1, 1, 0),
+            LocalDateTimeNull = withNullables ? new LocalDateTime(2020, 2, 29, 12, 30) : null,
+            LocalTimeNonNull = new LocalTime(1, 0),
+            LocalTimeNull = withNullables ? new LocalTime(12, 30) : null,
+            OffsetDateTimeNonNull = new OffsetDateTime(new LocalDateTime(2019, 7, 1, 1, 0), Offset.Zero),
+            OffsetDateTimeNull = withNullables ? new OffsetDateTime(new LocalDateTime(2020, 2, 29, 12, 30), Offset.FromHoursAndMinutes(5, 30)) : null,
+        };
+
+        private static PrecisionNodaTypes CreatePrecisionNodaTypes(int id, LocalDateTime value) => new PrecisionNodaTypes
+        {
+            Id = id,
+            InstantAsDateTime = value.InUtc().ToInstant(),
+            InstantAsSmallDateTime = value.InUtc().ToInstant(),
+            InstantAsDateTime2Of0 = value.InUtc().ToInstant(),
+            InstantWithPrecision3 = value.InUtc().ToInstant(),
+            LocalDateTimeAsDateTime = value,
+            LocalDateTimeAsSmallDateTime = value,
+            LocalDateTimeAsDateTime2Of0 = value,
+            LocalDateTimeWithPrecision3 = value,
+            OffsetDateTimeAsDateTimeOffsetOf3 = new OffsetDateTime(value, Offset.FromHoursAndMinutes(5, 30)),
+            OffsetDateTimeWithPrecision2 = new OffsetDateTime(value, Offset.FromHoursAndMinutes(5, 30)),
+            LocalTimeAsTimeOf3 = value.TimeOfDay,
+            LocalTimeWithPrecision2 = value.TimeOfDay,
+            DurationAsTimeOf3 = Duration.FromTicks(value.TimeOfDay.TickOfDay),
+            DurationWithPrecision2 = Duration.FromTicks(value.TimeOfDay.TickOfDay),
+        };
     }
 }

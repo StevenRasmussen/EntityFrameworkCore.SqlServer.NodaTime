@@ -28,6 +28,8 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
             typeof(Instant),
             typeof(OffsetDateTime),
             typeof(LocalDateTime),
+            typeof(LocalTime),
+            typeof(Duration),
         };
 
         /// <summary>
