@@ -28,7 +28,7 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
         }
 
 
-        public SqlExpression Translate(SqlExpression instance, MemberInfo member, Type returnType, IDiagnosticsLogger<DbLoggerCategory.Query> logger)
+        public virtual SqlExpression Translate(SqlExpression instance, MemberInfo member, Type returnType, IDiagnosticsLogger<DbLoggerCategory.Query> logger)
         {
             if (member.DeclaringType == this._declaringType)
             {

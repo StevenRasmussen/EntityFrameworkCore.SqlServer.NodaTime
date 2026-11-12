@@ -9,7 +9,8 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
 {
     public class SqlServerNodaTimeTypeMappingSourcePlugin : IRelationalTypeMappingSourcePlugin
     {
-        public virtual ConcurrentDictionary<string, List<RelationalTypeMapping>> StoreTypeMappings { get; } = new ConcurrentDictionary<string, List<RelationalTypeMapping>>();
+        // SQL Server type names aren't case-sensitive, so HasColumnType("DATETIME2") must find the "datetime2" mappings.
+        public virtual ConcurrentDictionary<string, List<RelationalTypeMapping>> StoreTypeMappings { get; } = new ConcurrentDictionary<string, List<RelationalTypeMapping>>(StringComparer.OrdinalIgnoreCase);
         public virtual ConcurrentDictionary<Type, RelationalTypeMapping> ClrTypeMappings { get; } = new ConcurrentDictionary<Type, RelationalTypeMapping>();
 
         private readonly InstantTypeMapping _instantSmallDateTimeTypeMapping = new InstantTypeMapping(SqlServerDateTimeTypes.SmallDateTime);
@@ -30,6 +31,19 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
             typeof(LocalDateTime),
             typeof(LocalTime),
             typeof(Duration),
+        };
+
+        // SQL Server's built-in type names (and their ISO synonyms). A NodaTime property configured with one of these
+        // that we don't map it to (e.g. bigint on a Duration) is a misconfiguration. Any other name may be a
+        // user-defined alias type (CREATE TYPE ... FROM date), which keeps the default mapping as it always has.
+        private static readonly HashSet<string> _sqlServerBuiltInTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "bigint", "binary", "bit", "char", "date", "datetime", "datetime2", "datetimeoffset", "decimal", "float",
+            "geography", "geometry", "hierarchyid", "image", "int", "json", "money", "nchar", "ntext", "numeric",
+            "nvarchar", "real", "rowversion", "smalldatetime", "smallint", "smallmoney", "sql_variant", "sysname",
+            "text", "time", "timestamp", "tinyint", "uniqueidentifier", "varbinary", "varchar", "vector", "xml",
+            "binary varying", "char varying", "character", "character varying", "dec", "double precision", "integer",
+            "national char", "national char varying", "national character", "national character varying", "national text",
         };
 
         /// <summary>
@@ -56,7 +70,8 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
         {
             var clrType = mappingInfo.ClrType;
             var storeTypeName = mappingInfo.StoreTypeName;
-            var storeTypeNameBase = mappingInfo.StoreTypeNameBase;
+            // "datetime2 (3)" can leave a trailing space on the base name.
+            var storeTypeNameBase = mappingInfo.StoreTypeNameBase?.Trim() ?? storeTypeName;
 
             if (storeTypeName != null)
             {
@@ -71,12 +86,14 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
 
                     foreach (var m in mappings)
                         if (m.ClrType == clrType)
-                            return m;
+                            // HasColumnType("datetime2").HasPrecision(3) means datetime2(3), as it does for EF Core's own types.
+                            // Types that take no precision (datetime, smalldatetime, date) ignore it.
+                            return mappingInfo.Precision.HasValue && m.StoreTypePostfix == StoreTypePostfix.Precision ? m.Clone(mappingInfo) : m;
 
                     return null;
                 }
 
-                if (StoreTypeMappings.TryGetValue(storeTypeNameBase!, out mappings))
+                if (StoreTypeMappings.TryGetValue(storeTypeNameBase, out mappings))
                 {
                     if (clrType == null)
                         return null;
@@ -87,6 +104,12 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
 
                     return null;
                 }
+
+                // A built-in column type we don't map NodaTime types to (e.g. HasColumnType("bigint") on a Duration).
+                // Returning null makes EF Core report that the property can't be mapped to that type; falling through
+                // to the default mapping below would silently ignore the configured column type.
+                if (_sqlServerBuiltInTypes.Contains(storeTypeNameBase))
+                    return null;
             }
 
             if (clrType == null || !ClrTypeMappings.TryGetValue(clrType, out var mapping))

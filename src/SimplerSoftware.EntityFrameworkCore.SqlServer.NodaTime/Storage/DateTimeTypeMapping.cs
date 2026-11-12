@@ -49,7 +49,8 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
                     valueConverter,
                     jsonValueReaderWriter: jsonValueReaderWriter),
                 storeType,
-                StoreTypePostfix.Precision,
+                // Only datetime2 takes a precision; datetime(3) or smalldatetime(3) would be invalid SQL.
+                storeType == SqlServerDateTimeTypes.DateTime2 ? StoreTypePostfix.Precision : StoreTypePostfix.None,
                 storeType == SqlServerDateTimeTypes.DateTime2 ? System.Data.DbType.DateTime2 : System.Data.DbType.DateTime);
         }
 
@@ -74,27 +75,26 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
         {
             get
             {
-                switch (StoreType)
-                {
-                    case SqlServerDateTimeTypes.Date:
-                        return DateFormatConst;
-                    case SqlServerDateTimeTypes.DateTime:
-                        return DateTimeFormatConst;
-                    case SqlServerDateTimeTypes.SmallDateTime:
-                        return SmallDateTimeFormatConst;
-                    default:
-                        if (Size.HasValue)
-                        {
-                            var size = Size.Value;
-                            if (size <= 7
-                                && size >= 0)
-                            {
-                                return _dateTime2Formats[size];
-                            }
-                        }
+                // A mapping cloned from HasColumnType("DATETIME") keeps that spelling, so compare without case.
+                var storeType = StoreTypeNameBase;
+                if (string.Equals(storeType, SqlServerDateTimeTypes.Date, StringComparison.OrdinalIgnoreCase))
+                    return DateFormatConst;
+                if (string.Equals(storeType, SqlServerDateTimeTypes.DateTime, StringComparison.OrdinalIgnoreCase))
+                    return DateTimeFormatConst;
+                if (string.Equals(storeType, SqlServerDateTimeTypes.SmallDateTime, StringComparison.OrdinalIgnoreCase))
+                    return SmallDateTimeFormatConst;
 
-                        return _dateTime2Formats[7];
+                if (Size.HasValue)
+                {
+                    var size = Size.Value;
+                    if (size <= 7
+                        && size >= 0)
+                    {
+                        return _dateTime2Formats[size];
+                    }
                 }
+
+                return _dateTime2Formats[7];
             }
         }
     }
