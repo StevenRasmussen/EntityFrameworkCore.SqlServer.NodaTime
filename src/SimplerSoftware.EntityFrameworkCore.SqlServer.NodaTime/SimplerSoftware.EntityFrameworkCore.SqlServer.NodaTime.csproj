@@ -19,9 +19,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="JetBrains.Annotations" Version="2025.2.2" />
+    <PackageReference Include="JetBrains.Annotations" Version="2026.2.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="11.0.0" />
-    <PackageReference Include="NodaTime" Version="3.2.2" />
+    <PackageReference Include="NodaTime" Version="3.3.7" />
   </ItemGroup>
 
   <ItemGroup>
