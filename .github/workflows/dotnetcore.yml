@@ -5,7 +5,8 @@ on: [push]
 jobs:
   build:
 
-    runs-on: ubuntu-latest
+    # Windows runners include the SQL Server LocalDB runtime, which the integration tests use.
+    runs-on: windows-latest
 
     steps:
     - uses: actions/checkout@v4
@@ -15,5 +16,5 @@ jobs:
         dotnet-version: 11.0.x
     - name: Build with dotnet
       run: dotnet build "./src/SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.sln" --configuration Release
-    - name: Execute offline tests (LocalDB integration tests are Windows-only)
-      run: dotnet test "./src/SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests/SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.csproj" --configuration Release --filter "Category=Offline"
+    - name: Execute tests
+      run: dotnet test "./src/SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests/SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.csproj" --configuration Release --no-build
