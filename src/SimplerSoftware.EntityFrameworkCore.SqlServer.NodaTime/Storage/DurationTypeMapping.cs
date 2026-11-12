@@ -1,7 +1,9 @@
 ﻿using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.EntityFrameworkCore.Storage.Json;
 using NodaTime;
 using SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage;
+using System;
 using System.Data;
 using System.Data.Common;
 
@@ -65,10 +67,14 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Storage
 
         private static RelationalTypeMappingParameters CreateRelationalTypeMappingParameters()
         {
+            var converter = new DurationValueConverter();
             return new RelationalTypeMappingParameters(
                 new CoreTypeMappingParameters(
                     typeof(Duration),
-                    new DurationValueConverter()),
+                    converter,
+                    // EF Core needs a JSON reader/writer to handle collections of Duration, e.g. list.Contains(x.Duration) (#41).
+                    // This produces the same JSON that EF Core uses for a TimeSpan property with a DurationValueConverter.
+                    jsonValueReaderWriter: new JsonConvertedValueReaderWriter<Duration, TimeSpan>(JsonTimeSpanReaderWriter.Instance, converter)),
                 SqlServerDateTimeTypes.Time,
                 // Without this, HasPrecision(n) is ignored and the column is always time(7).
                 StoreTypePostfix.Precision);

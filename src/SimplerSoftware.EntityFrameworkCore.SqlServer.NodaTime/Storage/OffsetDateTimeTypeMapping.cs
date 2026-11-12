@@ -1,6 +1,8 @@
 ﻿using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.EntityFrameworkCore.Storage.Json;
 using NodaTime;
 using SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage;
+using System;
 using System.Data.Common;
 
 namespace Microsoft.EntityFrameworkCore.SqlServer.Storage
@@ -34,10 +36,14 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Storage
 
         private static RelationalTypeMappingParameters CreateRelationalTypeMappingParameters()
         {
+            var converter = new OffsetDateTimeValueConverter();
             return new RelationalTypeMappingParameters(
                 new CoreTypeMappingParameters(
                     typeof(OffsetDateTime),
-                    new OffsetDateTimeValueConverter()),
+                    converter,
+                    // EF Core needs a JSON reader/writer to handle collections of OffsetDateTime, e.g. list.Contains(x.OffsetDateTime) (#41).
+                    // This produces the same JSON that EF Core uses for a DateTimeOffset property with an OffsetDateTimeValueConverter.
+                    jsonValueReaderWriter: new JsonConvertedValueReaderWriter<OffsetDateTime, DateTimeOffset>(JsonDateTimeOffsetReaderWriter.Instance, converter)),
                 SqlServerDateTimeTypes.DateTimeOffset,
                 // Without this, HasPrecision(n) is ignored and the column is always datetimeoffset(7).
                 StoreTypePostfix.Precision);

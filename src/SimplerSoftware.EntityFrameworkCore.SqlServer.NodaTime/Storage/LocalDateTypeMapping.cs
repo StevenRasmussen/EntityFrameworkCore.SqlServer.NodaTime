@@ -1,8 +1,10 @@
-﻿using System.Data;
+﻿using System;
+using System.Data;
 using System.Data.Common;
 
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.EntityFrameworkCore.Storage.Json;
 using NodaTime;
 using SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage;
 
@@ -45,10 +47,14 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Storage
 
         private static RelationalTypeMappingParameters CreateRelationalTypeMappingParameters()
         {
+            var converter = new LocalDateValueConverter();
             return new RelationalTypeMappingParameters(
                 new CoreTypeMappingParameters(
                     typeof(LocalDate),
-                    new LocalDateValueConverter()),
+                    converter,
+                    // EF Core needs a JSON reader/writer to handle collections of LocalDate, e.g. list.Contains(x.LocalDate) (#41).
+                    // This produces the same JSON that EF Core uses for a DateTime property with a LocalDateValueConverter.
+                    jsonValueReaderWriter: new JsonConvertedValueReaderWriter<LocalDate, DateTime>(JsonDateTimeReaderWriter.Instance, converter)),
                 SqlServerDateTimeTypes.Date,
                 StoreTypePostfix.None,
                 System.Data.DbType.Date);
