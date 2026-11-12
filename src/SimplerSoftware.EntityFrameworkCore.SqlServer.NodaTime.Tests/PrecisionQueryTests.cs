@@ -144,7 +144,9 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
                 OffsetDateTimeAsDateTimeOffsetOf3 = new OffsetDateTime(fine, offset),
                 OffsetDateTimeWithPrecision2 = new OffsetDateTime(fine, offset),
                 LocalTimeAsTimeOf3 = fine.TimeOfDay,
+                LocalTimeWithPrecision2 = fine.TimeOfDay,
                 DurationAsTimeOf3 = Duration.FromTicks(fine.TimeOfDay.TickOfDay),
+                DurationWithPrecision2 = Duration.FromTicks(fine.TimeOfDay.TickOfDay),
             };
 
             this.Db.Add(entity);
@@ -168,7 +170,9 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
             Assert.Equal(Iso(new OffsetDateTime(second.PlusMilliseconds(120), offset)), Iso(fromDb.OffsetDateTimeWithPrecision2));
 
             Assert.Equal(Iso(new LocalTime(3, 4, 5, 123)), Iso(fromDb.LocalTimeAsTimeOf3));
+            Assert.Equal(Iso(new LocalTime(3, 4, 5, 120)), Iso(fromDb.LocalTimeWithPrecision2));
             Assert.Equal(Iso(Duration.FromTicks(new LocalTime(3, 4, 5, 123).TickOfDay)), Iso(fromDb.DurationAsTimeOf3));
+            Assert.Equal(Iso(Duration.FromTicks(new LocalTime(3, 4, 5, 120).TickOfDay)), Iso(fromDb.DurationWithPrecision2));
         }
     }
 }

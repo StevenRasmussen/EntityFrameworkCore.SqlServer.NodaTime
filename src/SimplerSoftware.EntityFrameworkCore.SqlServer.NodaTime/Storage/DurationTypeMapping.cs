@@ -69,7 +69,9 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Storage
                 new CoreTypeMappingParameters(
                     typeof(Duration),
                     new DurationValueConverter()),
-                SqlServerDateTimeTypes.Time);
+                SqlServerDateTimeTypes.Time,
+                // Without this, HasPrecision(n) is ignored and the column is always time(7).
+                StoreTypePostfix.Precision);
         }
     }
 }

@@ -24,7 +24,9 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
         public OffsetDateTime OffsetDateTimeWithPrecision2 { get; set; }
 
         public LocalTime LocalTimeAsTimeOf3 { get; set; }
+        public LocalTime LocalTimeWithPrecision2 { get; set; }
 
         public Duration DurationAsTimeOf3 { get; set; }
+        public Duration DurationWithPrecision2 { get; set; }
     }
 }

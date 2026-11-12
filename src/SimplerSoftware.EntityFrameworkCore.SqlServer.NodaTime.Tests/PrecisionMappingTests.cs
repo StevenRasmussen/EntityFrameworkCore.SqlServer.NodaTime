@@ -29,7 +29,9 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         [InlineData(nameof(PrecisionNodaTypes.OffsetDateTimeAsDateTimeOffsetOf3), "datetimeoffset(3)")]
         [InlineData(nameof(PrecisionNodaTypes.OffsetDateTimeWithPrecision2), "datetimeoffset(2)")]
         [InlineData(nameof(PrecisionNodaTypes.LocalTimeAsTimeOf3), "time(3)")]
+        [InlineData(nameof(PrecisionNodaTypes.LocalTimeWithPrecision2), "time(2)")]
         [InlineData(nameof(PrecisionNodaTypes.DurationAsTimeOf3), "time(3)")]
+        [InlineData(nameof(PrecisionNodaTypes.DurationWithPrecision2), "time(2)")]
         public void Configured_column_type_or_precision_is_honoured(string propertyName, string expectedStoreType)
         {
             var property = Context.Model.FindEntityType(typeof(PrecisionNodaTypes))!.FindProperty(propertyName)!;

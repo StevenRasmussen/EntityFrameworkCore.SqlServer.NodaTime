@@ -55,7 +55,9 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
                 entity.Property(x => x.OffsetDateTimeWithPrecision2).HasPrecision(2);
 
                 entity.Property(x => x.LocalTimeAsTimeOf3).HasColumnType("time(3)");
+                entity.Property(x => x.LocalTimeWithPrecision2).HasPrecision(2);
                 entity.Property(x => x.DurationAsTimeOf3).HasColumnType("time(3)");
+                entity.Property(x => x.DurationWithPrecision2).HasPrecision(2);
 
                 entity.HasData(
                     CreatePrecisionNodaTypes(1, new LocalDateTime(2019, 1, 1, 8, 0)),
@@ -140,7 +142,9 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
             OffsetDateTimeAsDateTimeOffsetOf3 = new OffsetDateTime(value, Offset.FromHoursAndMinutes(5, 30)),
             OffsetDateTimeWithPrecision2 = new OffsetDateTime(value, Offset.FromHoursAndMinutes(5, 30)),
             LocalTimeAsTimeOf3 = value.TimeOfDay,
+            LocalTimeWithPrecision2 = value.TimeOfDay,
             DurationAsTimeOf3 = Duration.FromTicks(value.TimeOfDay.TickOfDay),
+            DurationWithPrecision2 = Duration.FromTicks(value.TimeOfDay.TickOfDay),
         };
     }
 }
