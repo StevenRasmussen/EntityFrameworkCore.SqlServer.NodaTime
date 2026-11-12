@@ -25,6 +25,33 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         }
 
         [Fact]
+        public async Task LocalDate_can_be_used_in_query_with_parameter()
+        {
+            var date = new LocalDate(2019, 7, 1);
+            var raceResults = await this.Db.Race.Where(r => r.Date >= date).ToListAsync();
+
+            Assert.Equal(
+                condense(@$"{RaceSelectStatement} WHERE [r].[Date] >= @date"),
+                condense(this.Db.Sql));
+
+            Assert.Equal(6, raceResults.Count);
+        }
+
+        [Fact]
+        public async Task LocalDate_PlusDays_with_parameters()
+        {
+            var days = 45;
+            var date = new LocalDate(2019, 7, 1);
+            var raceResults = await this.Db.Race.Where(r => r.Date.PlusDays(days) >= date).ToListAsync();
+
+            Assert.Equal(
+                condense(@$"{RaceSelectStatement} WHERE DATEADD(day, @days, [r].[Date]) >= @date"),
+                condense(this.Db.Sql));
+
+            Assert.Equal(7, raceResults.Count);
+        }
+
+        [Fact]
         public async Task LocalDate_PlusYears()
         {
             var raceResults = await this.Db.Race.Where(r => r.Date.PlusYears(1) >= new LocalDate(2019, 7, 1)).ToListAsync();

@@ -25,6 +25,19 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         }
 
         [Fact]
+        public async Task Duration_can_be_used_in_query_with_parameter()
+        {
+            var duration = Duration.FromHours(7);
+            var raceResults = await this.Db.Race.Where(r => r.ScheduledDuration >= duration).ToListAsync();
+
+            Assert.Equal(
+                condense(@$"{RaceSelectStatement} WHERE [r].[ScheduledDuration] >= @duration"),
+                condense(this.Db.Sql));
+
+            Assert.Equal(6, raceResults.Count);
+        }
+
+        [Fact]
         public async Task Duration_PlusHours()
         {
             var raceResults = await this.Db.Race.Where(r => r.ScheduledDuration.PlusHours(2) >= Duration.FromHours(6)).ToListAsync();

@@ -26,6 +26,19 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         }
 
         [Fact]
+        public async Task OffsetDateTime_can_be_used_in_query_with_parameter()
+        {
+            var startTimeOffset = GetOffsetDateTimeFromParts(2019, 7, 1, 14, 0, 0, 0, 5);
+            var raceResults = await this.Db.RaceResult.Where(r => r.StartTimeOffset == startTimeOffset).ToListAsync();
+
+            Assert.Equal(
+                condense(@$"{RaceResultSelectStatement} WHERE [r].[StartTimeOffset] = @startTimeOffset"),
+                condense(this.Db.Sql));
+
+            Assert.Single(raceResults);
+        }
+
+        [Fact]
         public async Task OffsetDateTime_PlusYears()
         {
             var raceResults = await this.Db.RaceResult.Where(r => r.StartTimeOffset.PlusYears(1) == GetOffsetDateTimeFromParts(2020, 7, 1, 14, 0, 0, 0, 5)).ToListAsync();

@@ -1,5 +1,7 @@
 ﻿using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using NodaTime;
+using NodaTime.Text;
 using SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models;
 using System;
 using Xunit;
@@ -35,5 +37,21 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
             var split = str.Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
             return string.Join(" ", split);
         }
+
+        /// <summary>
+        /// Formats a NodaTime value losslessly (NodaTime's ToString() drops fractional seconds), so that
+        /// Assert.Equal(Iso(expected), Iso(actual)) both compares exactly and produces a readable failure message.
+        /// </summary>
+        protected static string Iso(object value) => value switch
+        {
+            null => "null",
+            Instant v => InstantPattern.ExtendedIso.Format(v),
+            LocalDateTime v => LocalDateTimePattern.ExtendedIso.Format(v),
+            OffsetDateTime v => OffsetDateTimePattern.ExtendedIso.Format(v),
+            LocalDate v => LocalDatePattern.Iso.Format(v),
+            LocalTime v => LocalTimePattern.ExtendedIso.Format(v),
+            Duration v => DurationPattern.Roundtrip.Format(v),
+            _ => throw new ArgumentException($"Unsupported type {value.GetType()}", nameof(value)),
+        };
     }
 }
