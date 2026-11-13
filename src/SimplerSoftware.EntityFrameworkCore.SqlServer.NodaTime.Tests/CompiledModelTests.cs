@@ -53,6 +53,8 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
 
             public DbSet<ZonedEvent> ZonedEvents { get; set; }
 
+            public DbSet<PeriodEvent> PeriodEvents { get; set; }
+
             protected override void OnModelCreating(ModelBuilder modelBuilder)
                 => RacingContext.ConfigureMappings(modelBuilder);
         }
@@ -132,6 +134,8 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
             ZonedDateTime zoned => global::NodaTime.Text.ZonedDateTimePattern.ExtendedFormatOnlyIso.Format(zoned),
             DateTimeZone zone => zone.Id,
             Schedule schedule => Format(schedule),
+            Period period => period.ToString(),
+            PeriodRule rule => rule.Name + " " + FormatValue(rule.Every),
             _ => value.ToString(),
         };
 
@@ -176,6 +180,26 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
             await AssertSameRows(db => db.Set<RaceSplit>(), x => x.Id);
             await AssertSameRows(db => db.Set<DurationStorageTypes>(), x => x.Id);
             await AssertSameRows(db => db.Set<ZonedEvent>(), x => x.Id);
+            await AssertSameRows(db => db.Set<PeriodEvent>(), x => x.Id);
+        }
+
+        /// <summary>A Period is created with its internal constructor, which the compiled model has to reach too (#3).</summary>
+        [Fact]
+        public async Task Period_queries_give_the_same_results_as_with_the_normal_model()
+        {
+            var period = Period.FromMonths(1) + Period.FromHours(2);
+            using var db = CreateContext();
+
+            async Task AssertSame<T>(Func<IQueryable<PeriodEvent>, IQueryable<T>> query)
+                => Assert.Equal(
+                    (await query(this.Db.PeriodEvents).ToListAsync()).Select(v => FormatValue(v)),
+                    (await query(db.Set<PeriodEvent>()).ToListAsync()).Select(v => FormatValue(v)));
+
+            await AssertSame(q => q.OrderBy(x => x.Id).Select(x => x.Every));
+            await AssertSame(q => q.OrderBy(x => x.Id).Select(x => x.Rule.Every));
+            await AssertSame(q => q.OrderBy(x => x.Id).Select(x => x.From + x.Every));
+            await AssertSame(q => q.Where(x => x.Every.HasTimeComponent).OrderBy(x => x.Id).Select(x => x.Id));
+            await AssertSame(q => q.OrderBy(x => x.Id).Select(x => x.From + period));
         }
 
         /// <summary>A ZonedDateTime is mapped through its private fields, which the compiled model has to reach too (#22).</summary>

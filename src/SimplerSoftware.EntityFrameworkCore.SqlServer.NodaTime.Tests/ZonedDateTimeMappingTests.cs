@@ -274,11 +274,14 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
             public ZonedDateTime Start { get; set; }
         }
 
-        /// <summary>In an owned type, the columns are named as EF Core names the owned type's other columns.</summary>
+        /// <summary>
+        /// EF Core can't query a complex property of an owned type, whatever its table: every query of the owner would
+        /// fail inside EF Core. So the model fails to build, saying what to do instead.
+        /// </summary>
         [Theory]
-        [InlineData(false, "[Booking_Start] datetimeoffset", "[Booking_Start_Zone] nvarchar(50)")]
-        [InlineData(true, "[Start] datetimeoffset", "[Start_Zone] nvarchar(50)")]
-        public void Owned_type(bool ownTable, string expectedColumn, string expectedZoneColumn)
+        [InlineData(false)]
+        [InlineData(true)]
+        public void Owned_type(bool ownTable)
         {
             using var db = new AppointmentContext(b => b.Entity<Lesson>().OwnsOne(x => x.Booking, o =>
             {
@@ -286,10 +289,18 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
                     o.ToTable("Bookings");
             }));
 
-            var script = db.Database.GenerateCreateScript();
+            var exception = Assert.Throws<InvalidOperationException>(() => db.Model);
 
-            Assert.Contains(expectedColumn, script);
-            Assert.Contains(expectedZoneColumn, script);
+            Assert.Contains("'Booking.Start' is a ZonedDateTime on the owned entity type 'Booking'", exception.Message);
+        }
+
+        [Fact]
+        public void Owned_type_with_its_own_converter()
+        {
+            var pattern = ZonedDateTimePattern.CreateWithInvariantCulture("uuuu'-'MM'-'dd'T'HH':'mm':'ss;FFFFFFFFFo<G> z", DateTimeZoneProviders.Tzdb);
+            using var db = new AppointmentContext(b => b.Entity<Lesson>().OwnsOne(x => x.Booking, o => o.Property(x => x.Start).HasConversion(z => pattern.Format(z), s => pattern.Parse(s).Value)));
+
+            Assert.Contains("[Booking_Start] nvarchar(max) NULL", db.Database.GenerateCreateScript());
         }
 
         /// <summary>The zone column's type from HasMaxLength, IsUnicode and IsFixedLength, as for a string.</summary>

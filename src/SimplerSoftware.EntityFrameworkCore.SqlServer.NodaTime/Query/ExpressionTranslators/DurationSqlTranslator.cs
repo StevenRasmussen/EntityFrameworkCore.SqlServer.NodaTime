@@ -187,7 +187,7 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
         /// DATEDIFF_BIG(microsecond, '19000101', x) * 10 + DATEPART(nanosecond, x) / 100 % 10. DATEDIFF counts the
         /// microsecond boundaries crossed, rounding down, and DATEPART gives the rest, which is never negative.
         /// </summary>
-        private SqlExpression Ticks(SqlExpression dateTime2)
+        public SqlExpression Ticks(SqlExpression dateTime2)
         {
             var microseconds = _sqlExpressionFactory.Function(
                 "DATEDIFF_BIG",
@@ -626,7 +626,7 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
         /// An int literal when the value fits, otherwise CAST(... AS bigint): SQL Server types a larger literal as
         /// numeric, and bigint / numeric is decimal division, not integer division.
         /// </summary>
-        private SqlExpression Integer(long value)
+        public SqlExpression Integer(long value)
             => value >= int.MinValue && value <= int.MaxValue
                 ? _sqlExpressionFactory.Constant((int)value, typeof(int), _intTypeMapping)
                 : _sqlExpressionFactory.Constant(value, typeof(long), _longTypeMapping);
