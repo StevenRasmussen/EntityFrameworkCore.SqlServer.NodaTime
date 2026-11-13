@@ -61,7 +61,10 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         [Theory]
         [InlineData(nameof(Entity.Duration), "smallint")]
         [InlineData(nameof(Entity.Duration), "decimal(20, 0)")]
-        [InlineData(nameof(Entity.Duration), "nvarchar(40)")]
+        [InlineData(nameof(Entity.Duration), "uniqueidentifier")]
+        // Text shorter than the longest stored value (28 characters) would fail when saving, perhaps only for a negative value.
+        [InlineData(nameof(Entity.Duration), "nvarchar(27)")]
+        [InlineData(nameof(Entity.Duration), "char(10)")]
         [InlineData(nameof(Entity.Duration), "datetime")]
         [InlineData(nameof(Entity.Instant), "nvarchar(40)")]
         [InlineData(nameof(Entity.Instant), "BIGINT")]

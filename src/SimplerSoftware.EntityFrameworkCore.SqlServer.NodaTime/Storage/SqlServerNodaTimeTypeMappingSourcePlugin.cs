@@ -26,6 +26,10 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
         private readonly DurationBigIntTypeMapping _durationBigIntTypeMapping = new DurationBigIntTypeMapping();
         private readonly DurationIntTypeMapping _durationIntTypeMapping = new DurationIntTypeMapping();
         private readonly DurationDateTime2TypeMapping _durationDateTime2TypeMapping = new DurationDateTime2TypeMapping();
+        private readonly DurationStringTypeMapping _durationNVarCharTypeMapping = new DurationStringTypeMapping("nvarchar", unicode: true, fixedLength: false);
+        private readonly DurationStringTypeMapping _durationVarCharTypeMapping = new DurationStringTypeMapping("varchar", unicode: false, fixedLength: false);
+        private readonly DurationStringTypeMapping _durationNCharTypeMapping = new DurationStringTypeMapping("nchar", unicode: true, fixedLength: true);
+        private readonly DurationStringTypeMapping _durationCharTypeMapping = new DurationStringTypeMapping("char", unicode: false, fixedLength: true);
 
         private readonly static List<Type> _hasPrecisionTypes = new List<Type>
         {
@@ -67,10 +71,14 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
             this.AddTypeMappingToDictionaries(this._localDateTypeMapping);
             this.AddTypeMappingToDictionaries(this._localTimeTypeMapping);
             this.AddTypeMappingToDictionaries(this._durationTypeMapping);
-            // Only used when the column type is set to bigint, int or datetime2 (#38); time, above, stays the default for Duration.
+            // Only used when the column type is set to bigint, int, datetime2 or text (#38); time, above, stays the default for Duration.
             this.AddTypeMappingToDictionaries(this._durationBigIntTypeMapping);
             this.AddTypeMappingToDictionaries(this._durationIntTypeMapping);
             this.AddTypeMappingToDictionaries(this._durationDateTime2TypeMapping);
+            this.AddTypeMappingToDictionaries(this._durationNVarCharTypeMapping);
+            this.AddTypeMappingToDictionaries(this._durationVarCharTypeMapping);
+            this.AddTypeMappingToDictionaries(this._durationNCharTypeMapping);
+            this.AddTypeMappingToDictionaries(this._durationCharTypeMapping);
             // SQL Server's synonym for int, which EF Core also accepts.
             this.StoreTypeMappings["integer"] = new List<RelationalTypeMapping> { this._durationIntTypeMapping };
         }
@@ -94,10 +102,17 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
                         return null;
 
                     foreach (var m in mappings)
-                        if (m.ClrType == clrType)
-                            // HasColumnType("datetime2").HasPrecision(3) means datetime2(3), as it does for EF Core's own types.
-                            // Types that take no precision (datetime, smalldatetime, date) ignore it.
-                            return mappingInfo.Precision.HasValue && m.StoreTypePostfix == StoreTypePostfix.Precision ? m.Clone(mappingInfo) : m;
+                    {
+                        if (m.ClrType != clrType)
+                            continue;
+
+                        if (m is DurationStringTypeMapping)
+                            return TextMapping(m, mappingInfo, storeTypeNameBase);
+
+                        // HasColumnType("datetime2").HasPrecision(3) means datetime2(3), as it does for EF Core's own types.
+                        // Types that take no precision (datetime, smalldatetime, date) ignore it.
+                        return mappingInfo.Precision.HasValue && m.StoreTypePostfix == StoreTypePostfix.Precision ? m.Clone(mappingInfo) : m;
+                    }
 
                     return null;
                 }
@@ -109,7 +124,7 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
 
                     foreach (var m in mappings)
                         if (m.ClrType == clrType)
-                            return m.Clone(mappingInfo);
+                            return m is DurationStringTypeMapping ? TextMapping(m, mappingInfo, storeTypeNameBase) : m.Clone(mappingInfo);
 
                     return null;
                 }
@@ -128,6 +143,23 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
             return mappingInfo.Precision.HasValue && _hasPrecisionTypes.Contains(mapping.ClrType)
                 ? mapping.Clone(mappingInfo)
                 : mapping;
+        }
+
+        /// <summary>
+        /// A Duration stored as text needs room for the longest value, <see cref="DurationStringValueConverter.MaxLength"/>
+        /// characters. A shorter length is refused like any other unsupported column type, since saving would fail later
+        /// (perhaps only for a negative value). No length at all, as in plain "nvarchar" (which SQL Server reads as
+        /// nvarchar(1)), means 28; one from HasMaxLength is kept.
+        /// </summary>
+        private static RelationalTypeMapping TextMapping(RelationalTypeMapping mapping, in RelationalTypeMappingInfo mappingInfo, string storeTypeNameBase)
+        {
+            if (mappingInfo.Size is > 0 and < DurationStringValueConverter.MaxLength)
+                return null;
+
+            if (mappingInfo.Size == null && !mappingInfo.StoreTypeName.Contains('('))
+                return mapping.WithStoreTypeAndSize(storeTypeNameBase, DurationStringValueConverter.MaxLength);
+
+            return mapping.Clone(mappingInfo);
         }
 
         private void AddTypeMappingToDictionaries(RelationalTypeMapping relationalTypeMapping)

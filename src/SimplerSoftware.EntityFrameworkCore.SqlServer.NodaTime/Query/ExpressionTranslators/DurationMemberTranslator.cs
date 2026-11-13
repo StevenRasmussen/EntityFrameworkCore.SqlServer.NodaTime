@@ -52,6 +52,10 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
 
             var storage = DurationSqlTranslator.StorageOf(instance);
 
+            // A Duration stored as text: only equality is translated.
+            if (storage == DurationStorage.String)
+                return null;
+
             // bigint, int or datetime2: integer arithmetic, which also handles 24 hours or more and negative durations.
             if (DurationSqlTranslator.HasArithmeticComponents(storage))
                 return _durations.Component(instance, component.NanosecondsPerUnit, component.Modulo, returnType);

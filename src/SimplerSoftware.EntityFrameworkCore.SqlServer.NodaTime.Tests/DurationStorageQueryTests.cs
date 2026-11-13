@@ -510,6 +510,72 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
                 rows.Select(r => (r.DateTime2.Value, r.Days, r.Hours, r.Minutes, r.SubsecondNanoseconds, r.Long, r.LongerThanInt)).ToArray());
         }
 
+        // Text: equality only
+
+        [Fact]
+        public async Task Text_keeps_every_nanosecond()
+        {
+            var rows = await ReadRows(x => true);
+
+            Assert.Equal(rows.Select(x => x.BigInt).ToList(), rows.Select(x => x.Text).ToList());
+        }
+
+        [Fact]
+        public Task Text_equal_to_a_constant()
+            => AssertSameAsDotNet(x => x.Text == Duration.FromHours(25), x => x.Id);
+
+        [Fact]
+        public Task Text_equal_to_a_negative_parameter()
+        {
+            var value = -(Duration.FromHours(26) + Duration.FromMinutes(3) + Duration.FromMilliseconds(500));
+            return AssertSameAsDotNet(x => x.Text == value, x => x.Id);
+        }
+
+        [Fact]
+        public Task Text_not_equal_with_nulls()
+        {
+            var value = Duration.FromHours(1);
+            return AssertSameAsDotNet(x => x.Text != value, x => x.Id);
+        }
+
+        [Fact]
+        public Task Text_Equals()
+            => AssertSameAsDotNet(x => x.Text != null && x.Text.Value.Equals(Duration.FromHours(1)), x => x.Id);
+
+        /// <summary>Every value has the same width, so text order is duration order for values that aren't negative.</summary>
+        [Fact]
+        public async Task Text_sorts_values_that_arent_negative()
+        {
+            var rows = await ReadRows(x => x.BigInt >= Duration.Zero);
+            var expected = rows.OrderBy(x => x.BigInt).Select(x => x.Id).ToList();
+
+            var actual = await this.Db.DurationStorageTypes.Where(x => x.BigInt >= Duration.Zero).OrderBy(x => x.Text).Select(x => x.Id).ToListAsync();
+
+            Assert.Equal(expected, actual);
+        }
+
+        [Fact]
+        public Task ExecuteUpdate_text_with_a_parameter()
+        {
+            var value = -Duration.FromNanoseconds(123_456_789_012);
+            return AssertExecuteUpdate(
+                x => true,
+                s => s.SetProperty(x => x.Text, value),
+                (before, after) => Assert.Equal(value, after.Text));
+        }
+
+        /// <summary>Text can't be converted to or from another storage in SQL, so this isn't translated.</summary>
+        [Fact]
+        public async Task ExecuteUpdate_text_from_a_bigint_column_is_not_translated()
+        {
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => AssertExecuteUpdate(
+                x => true,
+                s => s.SetProperty(x => x.Text, x => x.BigInt),
+                (before, after) => { }));
+
+            Assert.Contains("could not be translated", exception.Message);
+        }
+
         /// <summary>Runs ExecuteUpdate in a transaction that is rolled back, and checks each updated row.</summary>
         private async Task AssertExecuteUpdate(
             Expression<Func<DurationStorageTypes, bool>> filter,

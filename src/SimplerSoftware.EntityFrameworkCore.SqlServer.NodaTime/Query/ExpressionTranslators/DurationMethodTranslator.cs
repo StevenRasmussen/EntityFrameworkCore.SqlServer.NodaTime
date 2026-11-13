@@ -182,6 +182,8 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
             _durations = new DurationSqlTranslator(sqlExpressionFactory);
         }
 
+        private static bool IsDuration(Type type) => type == typeof(Duration) || type == typeof(Duration?);
+
         public override SqlExpression Translate(SqlExpression instance, MethodInfo method, IReadOnlyList<SqlExpression> arguments, IDiagnosticsLogger<DbLoggerCategory.Query> logger)
         {
             // Duration's operators, rewritten into calls by NodaTimeQueryExpressionInterceptor.
@@ -213,9 +215,13 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
             if (method == DurationOperators.SameStorageMethod || method == DurationOperators.SameNullableStorageMethod)
                 return _durations.SameStorage(arguments[0], logger);
 
-
             if (method == DurationOperators.ForColumnMethod || method == DurationOperators.ForNullableColumnMethod)
                 return _durations.ForColumn(arguments[0], arguments[1]);
+
+            // A Duration stored as text: only equality is translated, through the comparison stand-ins above. Nothing
+            // below may fall back to DATEADD or DATEDIFF on it.
+            if (DurationSqlTranslator.IsText(instance) || arguments.Any(a => IsDuration(a.Type) && DurationSqlTranslator.IsText(a)))
+                return null;
 
             if (method == _plus)
                 return _durations.Arithmetic(ExpressionType.Add, instance, arguments[0]);

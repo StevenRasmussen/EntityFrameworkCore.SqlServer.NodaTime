@@ -5,7 +5,7 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
     /// <summary>
     /// A Duration stored each of the supported ways (#38). Time is null where the value can't be a time
     /// (24 hours or more, or negative), and Int where it is outside the range of an int of seconds.
-    /// DateTime2 holds the same values as BigInt.
+    /// DateTime2 and Text hold the same values as BigInt.
     /// </summary>
     public class DurationStorageTypes
     {
@@ -22,5 +22,8 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
 
         /// <summary>datetime2, the offset from 1900-01-01.</summary>
         public Duration? DateTime2 { get; set; }
+
+        /// <summary>nvarchar(28), fixed-width text.</summary>
+        public Duration? Text { get; set; }
     }
 }

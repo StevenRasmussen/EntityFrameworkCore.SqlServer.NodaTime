@@ -28,6 +28,9 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
         /// <summary>datetime2 holding the offset from 1900-01-01: HasColumnType("datetime2").</summary>
         DateTime2,
 
+        /// <summary>Fixed-width text: HasColumnType("nvarchar(28)") etc. Only equality is translated.</summary>
+        String,
+
         /// <summary>Anything else, such as the user's own value converter. Translated as it was before #38.</summary>
         Other,
     }
@@ -70,6 +73,7 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
             DurationBigIntTypeMapping => DurationStorage.Nanoseconds,
             DurationIntTypeMapping => DurationStorage.Seconds,
             DurationDateTime2TypeMapping => DurationStorage.DateTime2,
+            DurationStringTypeMapping => DurationStorage.String,
             DurationTypeMapping => DurationStorage.Time,
             // e.g. the user's own converter to TimeSpan
             _ when string.Equals(typeMapping.StoreTypeNameBase?.Trim(), SqlServerDateTimeTypes.Time, StringComparison.OrdinalIgnoreCase) => DurationStorage.Time,
@@ -81,6 +85,10 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
         /// <summary>Whether Days, Hours and so on are computed with integer arithmetic; DATEPART only works for a time.</summary>
         public static bool HasArithmeticComponents(DurationStorage storage)
             => storage is DurationStorage.Nanoseconds or DurationStorage.Seconds or DurationStorage.DateTime2;
+
+        /// <summary>Whether the duration is stored as text, for which only equality is translated.</summary>
+        public static bool IsText(SqlExpression duration)
+            => duration?.TypeMapping != null && StorageOf(duration) == DurationStorage.String;
 
         /// <summary>
         /// The duration as a number of nanoseconds, typed as a Duration stored in a bigint; null if its storage isn't
@@ -266,16 +274,21 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
         /// </summary>
         public SqlExpression Compare(ExpressionType operatorType, SqlExpression left, SqlExpression right, IDiagnosticsLogger<DbLoggerCategory.Query> logger)
         {
-            if (left.TypeMapping != null && right.TypeMapping != null)
+            var common = CommonStorage(new[] { left, right }, out var incompatible);
+            if (incompatible)
+                return null;
+
+            // Text: only = and <>, with other text or with a parameter or constant, which is formatted the same way.
+            // Text order only matches duration order for values that aren't negative, so < and > aren't translated.
+            if ((IsText(left) || IsText(right)) && operatorType is not (ExpressionType.Equal or ExpressionType.NotEqual))
+                return null;
+
+            if (common != null)
             {
-                var common = CommonStorage(new[] { left, right });
-                if (common != null)
-                {
-                    left = ConvertTo(left, common.Value);
-                    right = ConvertTo(right, common.Value);
-                }
+                left = ConvertTo(left, common.Value);
+                right = ConvertTo(right, common.Value);
             }
-            else
+            else if (left.TypeMapping == null || right.TypeMapping == null)
             {
                 // A side without a type mapping (a parameter or constant) takes the other side's, as usual, so that an
                 // index on the column can still be used. Against int, that truncates it to whole seconds.
@@ -291,32 +304,46 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
         /// </summary>
         public SqlExpression Arithmetic(ExpressionType operatorType, SqlExpression left, SqlExpression right)
         {
-            // The user's own converter: translated as before.
-            if (IsOther(left) || IsOther(right))
-                return _sqlExpressionFactory.MakeBinary(operatorType, left, right, typeMapping: null);
+            var leftNanoseconds = ToNanoseconds(left);
+            var rightNanoseconds = ToNanoseconds(right);
+            if (leftNanoseconds != null && rightNanoseconds != null)
+                return new SqlBinaryExpression(operatorType, leftNanoseconds, rightNanoseconds, typeof(Duration), DurationBigIntTypeMapping.Default);
 
-            return new SqlBinaryExpression(operatorType, ToNanoseconds(left), ToNanoseconds(right), typeof(Duration), DurationBigIntTypeMapping.Default);
+            // The user's own converter: translated as before. Text: not translated.
+            return (IsOther(left) || IsOther(right)) && !IsText(left) && !IsText(right)
+                ? _sqlExpressionFactory.MakeBinary(operatorType, left, right, typeMapping: null)
+                : null;
         }
 
-        /// <summary>-duration, in nanoseconds.</summary>
+        /// <summary>-duration, in nanoseconds. The user's own converter is translated as before; text is not translated.</summary>
         public SqlExpression Negate(SqlExpression duration)
-            => IsOther(duration)
-                ? _sqlExpressionFactory.Negate(duration)
-                : new SqlUnaryExpression(ExpressionType.Negate, ToNanoseconds(duration), typeof(Duration), DurationBigIntTypeMapping.Default);
+        {
+            var nanoseconds = ToNanoseconds(duration);
+            if (nanoseconds != null)
+                return new SqlUnaryExpression(ExpressionType.Negate, nanoseconds, typeof(Duration), DurationBigIntTypeMapping.Default);
+
+            return IsOther(duration) ? _sqlExpressionFactory.Negate(duration) : null;
+        }
 
         /// <summary>
         /// duration * number or duration / number, in nanoseconds. NodaTime truncates a division toward zero, as T-SQL
-        /// does. The user's own converter is translated as before.
+        /// does. The user's own converter is translated as before; text is not translated.
         /// </summary>
         public SqlExpression Scale(ExpressionType operatorType, SqlExpression duration, SqlExpression number)
-            => IsOther(duration)
-                ? _sqlExpressionFactory.MakeBinary(operatorType, duration, number, typeMapping: null)
-                : new SqlBinaryExpression(
+        {
+            var nanoseconds = ToNanoseconds(duration);
+            if (nanoseconds != null)
+            {
+                return new SqlBinaryExpression(
                     operatorType,
-                    ToNanoseconds(duration),
+                    nanoseconds,
                     _sqlExpressionFactory.ApplyTypeMapping(number, _longTypeMapping),
                     typeof(Duration),
                     DurationBigIntTypeMapping.Default);
+            }
+
+            return IsOther(duration) ? _sqlExpressionFactory.MakeBinary(operatorType, duration, number, typeMapping: null) : null;
+        }
 
         /// <summary>
         /// A value that ExecuteUpdate writes into a column, converted to the column's storage. Into int it is truncated
@@ -333,7 +360,15 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
 
             var valueStorage = StorageOf(value);
             var columnStorage = StorageOf(column);
-            if (valueStorage == columnStorage || valueStorage == DurationStorage.Other || columnStorage == DurationStorage.Other)
+            if (valueStorage == columnStorage)
+                return value;
+
+            // Text can't be converted to or from another storage in SQL, not even the user's own.
+            if (valueStorage == DurationStorage.String || columnStorage == DurationStorage.String)
+                return null;
+
+            // The user's own converter: written as it is, as before.
+            if (valueStorage == DurationStorage.Other || columnStorage == DurationStorage.Other)
                 return value;
 
             if (columnStorage == DurationStorage.DateTime2 && valueStorage is DurationStorage.Time or DurationStorage.Seconds)
@@ -416,7 +451,9 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
             {
                 case SqlFunctionExpression { Name: "COALESCE" } coalesce:
                 {
-                    var common = CommonStorage(coalesce.Arguments);
+                    var common = CommonStorage(coalesce.Arguments, out var incompatible);
+                    if (incompatible)
+                        return null;
                     if (common == null)
                     {
                         WarnIfTruncatedToSeconds(coalesce.Arguments, logger);
@@ -431,7 +468,9 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
                 case CaseExpression caseExpression:
                 {
                     var results = caseExpression.WhenClauses.Select(c => c.Result).Append(caseExpression.ElseResult).Where(r => r != null).ToList();
-                    var common = CommonStorage(results);
+                    var common = CommonStorage(results, out var incompatible);
+                    if (incompatible)
+                        return null;
                     if (common == null)
                     {
                         WarnIfTruncatedToSeconds(results, logger);
@@ -453,13 +492,15 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
         /// The storage that durations stored differently should all be converted to. A datetime2 alongside time or int
         /// values: datetime2, since those always fit one; that's exact, works for the whole datetime2 range, and an index
         /// on the datetime2 can still be used. Otherwise nanoseconds. Null if they are all stored the same way, or one is
-        /// stored in a way we don't know (the user's own converter).
+        /// stored in a way we don't know (the user's own converter). <paramref name="incompatible"/> is set when text is
+        /// mixed with another storage, which SQL can't convert, so the expression can't be translated.
         /// Expressions without a type mapping yet (parameters and constants) are left out.
         /// </summary>
-        private static DurationStorage? CommonStorage(IEnumerable<SqlExpression> durations)
+        private static DurationStorage? CommonStorage(IEnumerable<SqlExpression> durations, out bool incompatible)
         {
             var storages = durations.Where(d => d.TypeMapping != null).Select(StorageOf).Distinct().ToList();
-            if (storages.Count <= 1 || storages.Contains(DurationStorage.Other))
+            incompatible = storages.Count > 1 && storages.Contains(DurationStorage.String);
+            if (storages.Count <= 1 || incompatible || storages.Contains(DurationStorage.Other))
                 return null;
 
             return storages.Contains(DurationStorage.DateTime2)

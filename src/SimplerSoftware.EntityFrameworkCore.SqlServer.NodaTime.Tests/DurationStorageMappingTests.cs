@@ -34,6 +34,8 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
 
             public Duration? DateTime2 { get; set; }
 
+            public Duration? Text { get; set; }
+
             /// <summary>The user's own converter, which the library leaves alone.</summary>
             public Duration Ticks { get; set; }
         }
@@ -62,6 +64,7 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
                         entity.Property(x => x.BigInt).HasColumnType("bigint");
                         entity.Property(x => x.Int).HasColumnType("int");
                         entity.Property(x => x.DateTime2).HasColumnType("datetime2");
+                        entity.Property(x => x.Text).HasColumnType("nvarchar(28)");
                     }
                     entity.Property(x => x.Ticks).HasConversion(new ValueConverter<Duration, long>(d => d.BclCompatibleTicks, t => Duration.FromTicks(t)));
                 });
@@ -88,6 +91,11 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         [InlineData("datetime2", typeof(DurationDateTime2TypeMapping), "datetime2")]
         [InlineData("DATETIME2", typeof(DurationDateTime2TypeMapping), "datetime2")]
         [InlineData("datetime2(3)", typeof(DurationDateTime2TypeMapping), "datetime2(3)")]
+        [InlineData("nvarchar(28)", typeof(DurationStringTypeMapping), "nvarchar(28)")]
+        [InlineData("NVARCHAR(max)", typeof(DurationStringTypeMapping), "NVARCHAR(max)")]
+        [InlineData("varchar(30)", typeof(DurationStringTypeMapping), "varchar(30)")]
+        [InlineData("nchar(28)", typeof(DurationStringTypeMapping), "nchar(28)")]
+        [InlineData("char(28)", typeof(DurationStringTypeMapping), "char(28)")]
         public void Column_type_chooses_the_storage(string columnType, Type expectedMappingType, string expectedStoreType)
         {
             var mapping = MappingFor(columnType);
@@ -136,6 +144,8 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         [InlineData("int", -1.7, "-1")]
         [InlineData("datetime2", 25 * 3600, "'1900-01-02T01:00:00.0000000'")]
         [InlineData("datetime2", -3600.5, "'1899-12-31T22:59:59.5000000'")]
+        [InlineData("nvarchar(28)", 25 * 3600, "N'00000001:01:00:00.000000000'")]
+        [InlineData("varchar(28)", -93780.5, "'-00000001:02:03:00.500000000'")]
         public void Literal(string columnType, double seconds, string expected)
         {
             Assert.Equal(expected, MappingFor(columnType).GenerateSqlLiteral(Duration.FromSeconds(seconds)));
@@ -185,10 +195,79 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
             Assert.Throws<ArgumentOutOfRangeException>(() => DurationDateTime2ValueConverter.toProvider(Duration.FromDays(2_958_465)));
         }
 
+        /// <summary>Fixed-width text: days, hours, minutes, seconds and nanoseconds, with a sign only when negative.</summary>
+        [Fact]
+        public void Text_format()
+        {
+            Assert.Equal("00000000:00:00:00.000000000", DurationStringValueConverter.toProvider(Duration.Zero));
+            Assert.Equal("00000001:01:00:00.000000001", DurationStringValueConverter.toProvider(Duration.FromHours(25) + Duration.Epsilon));
+            Assert.Equal("-00000001:02:03:00.500000000", DurationStringValueConverter.toProvider(-(Duration.FromHours(26) + Duration.FromMinutes(3) + Duration.FromMilliseconds(500))));
+            Assert.Equal(DurationStringValueConverter.MaxLength, DurationStringValueConverter.toProvider(Duration.MinValue).Length);
+            Assert.Equal(Duration.MinValue, DurationStringValueConverter.fromProvider(DurationStringValueConverter.toProvider(Duration.MinValue)));
+            Assert.Equal(Duration.MaxValue, DurationStringValueConverter.fromProvider(DurationStringValueConverter.toProvider(Duration.MaxValue)));
+            // A char column pads the text with spaces.
+            Assert.Equal(Duration.FromHours(25), DurationStringValueConverter.fromProvider("00000001:01:00:00.000000000   "));
+        }
+
+        /// <summary>Plain "nvarchar" is nvarchar(1) to SQL Server, so it means nvarchar(28); a length from HasMaxLength is kept.</summary>
+        [Fact]
+        public void Text_length()
+        {
+            using var db = new Context();
+            var source = db.GetService<IRelationalTypeMappingSource>();
+
+            Assert.Equal("nvarchar(28)", source.FindMapping(typeof(Duration), "nvarchar").StoreType);
+            Assert.Equal("varchar(40)", source.FindMapping(typeof(Duration), "varchar", size: 40).StoreType);
+            Assert.Null(source.FindMapping(typeof(Duration), "nvarchar", size: 20));
+        }
+
+        /// <summary>Every value goes with the same parameter size, so SQL Server can reuse one plan.</summary>
+        [Theory]
+        [InlineData("nvarchar(max)", 28)]
+        [InlineData("nvarchar(40)", 40)]
+        public void Text_parameter_size(string columnType, int expectedSize)
+        {
+            var parameter = MappingFor(columnType).CreateParameter(new Microsoft.Data.SqlClient.SqlCommand(), "p", Duration.FromHours(1));
+
+            Assert.Equal(expectedSize, parameter.Size);
+        }
+
+        [Fact]
+        public void Text_equality_is_plain_equality()
+        {
+            var value = Duration.FromHours(25);
+            Assert.Contains("WHERE [e].[Text] = @value", Sql(q => q.Where(x => x.Text == value).Select(x => x.Id)));
+        }
+
+        /// <summary>
+        /// Text order only matches duration order for values that aren't negative, and nothing else can be computed
+        /// from text in SQL, so these aren't translated rather than give wrong results.
+        /// </summary>
+        [Fact]
+        public void Text_supports_only_equality()
+        {
+            var value = Duration.FromHours(1);
+            void AssertNotTranslated<T>(Func<IQueryable<Entity>, IQueryable<T>> query)
+                => Assert.Contains("could not be translated", Assert.Throws<InvalidOperationException>(() => Sql(query)).Message);
+
+            AssertNotTranslated(q => q.Where(x => x.Text > value));
+            AssertNotTranslated(q => q.Where(x => x.Text.Value.Hours == 1));
+            AssertNotTranslated(q => q.Where(x => x.Text.Value.Days == 1));
+            AssertNotTranslated(q => q.Where(x => DurationExtensions.PlusHours(x.Text.Value, 1) == value));
+            AssertNotTranslated(q => q.Where(x => DurationExtensions.Microseconds(x.Text.Value) == 1));
+            AssertNotTranslated(q => q.Where(x => x.Text + x.Text == value));
+            AssertNotTranslated(q => q.Where(x => -x.Text == value));
+            AssertNotTranslated(q => q.Where(x => x.Text * 2 == value));
+            AssertNotTranslated(q => q.Where(x => x.Text == x.BigInt));
+            AssertNotTranslated(q => q.Where(x => (x.Text ?? x.BigInt) == value));
+            AssertNotTranslated(q => q.Where(x => SqlServerNodaTimeDbFunctionsExtensions.DateDiffHour(EF.Functions, x.Text, x.BigInt) == 1));
+        }
+
         [Theory]
         [InlineData("bigint", "90000000000000")]
         [InlineData("int", "90000")]
         [InlineData("datetime2", "\"1900-01-02T01:00:00\"")]
+        [InlineData("nvarchar(28)", "\"00000001:01:00:00.000000000\"")]
         public void Json(string columnType, string expectedJson)
         {
             var readerWriter = MappingFor(columnType).JsonValueReaderWriter!;
