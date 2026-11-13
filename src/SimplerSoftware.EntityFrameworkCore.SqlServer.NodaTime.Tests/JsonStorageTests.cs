@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Xunit;
+using DurationExtensions = Microsoft.EntityFrameworkCore.SqlServer.NodaTime.Extensions.DurationExtensions;
 
 namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
 {
@@ -69,6 +70,74 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
                 Duration = Duration.FromMinutes(10),
             },
         };
+
+        // ---- Durations stored as bigint, datetime2 or text (#38): 24 hours or more, and negative ----
+
+        private static NodaTimeCollections WithLongDurations(NodaTimeCollections row, bool a)
+        {
+            row.DurationsInNanoseconds = a ? [Duration.FromHours(25), -Duration.FromMilliseconds(1500)] : [Duration.Epsilon, Duration.FromHours(3)];
+            row.Json.DurationAsBigInt = a ? Duration.FromHours(25) + Duration.Epsilon : Duration.FromMinutes(5);
+            row.Json.DurationAsDateTime2 = a ? RacingContext.NegativeWithFraction : Duration.FromMinutes(5);
+            row.Json.DurationAsText = a ? Duration.FromDays(100) : Duration.FromMinutes(5);
+            return row;
+        }
+
+        private static async Task<(int A, int B)> InsertLongDurationRowsAsync(RacingContext db)
+        {
+            var a = WithLongDurations(RowA(), a: true);
+            var b = WithLongDurations(RowB(), a: false);
+            db.NodaTimeCollections.AddRange(a, b);
+            await db.SaveChangesAsync();
+            db.ChangeTracker.Clear();
+            return (a.Id, b.Id);
+        }
+
+        [Fact]
+        public async Task Durations_stored_as_numbers_datetime2_and_text_round_trip()
+        {
+            using var db = CreateContext();
+            using var tx = await db.Database.BeginTransactionAsync();
+            var (a, b) = await InsertLongDurationRowsAsync(db);
+
+            var rows = await db.NodaTimeCollections.Where(x => x.Id == a || x.Id == b).OrderBy(x => x.Id).ToListAsync();
+
+            foreach (var (expected, actual) in new[] { WithLongDurations(RowA(), a: true), WithLongDurations(RowB(), a: false) }.Zip(rows))
+            {
+                Assert.Equal(expected.DurationsInNanoseconds, actual.DurationsInNanoseconds);
+                Assert.Equal(expected.Json.DurationAsBigInt, actual.Json.DurationAsBigInt);
+                Assert.Equal(expected.Json.DurationAsDateTime2, actual.Json.DurationAsDateTime2);
+                Assert.Equal(expected.Json.DurationAsText, actual.Json.DurationAsText);
+            }
+
+            // JSON numbers for bigint; the datetime2 and text formats as strings.
+            Assert.Equal("[90000000000000,-1500000000]", await RawAsync(db, a, "[DurationsInNanoseconds]"));
+            Assert.Equal("90000000000001", await RawAsync(db, a, "JSON_VALUE([Json], '$.DurationAsBigInt')"));
+            Assert.Equal("1899-12-30T21:56:59.5", await RawAsync(db, a, "JSON_VALUE([Json], '$.DurationAsDateTime2')"));
+            Assert.Equal("00000100:00:00:00.000000000", await RawAsync(db, a, "JSON_VALUE([Json], '$.DurationAsText')"));
+        }
+
+        [Fact]
+        public async Task Durations_stored_as_numbers_datetime2_and_text_in_queries()
+        {
+            using var db = CreateContext();
+            using var tx = await db.Database.BeginTransactionAsync();
+            var (a, b) = await InsertLongDurationRowsAsync(db);
+            var day = Duration.FromDays(1);
+            var hundredDays = Duration.FromDays(100);
+            var mine = db.NodaTimeCollections.Where(x => x.Id == a || x.Id == b);
+
+            Assert.Equal([a], await IdsAsync(mine.Where(x => x.DurationsInNanoseconds.Contains(Duration.FromHours(25)))));
+            Assert.Equal([a], await IdsAsync(mine.Where(x => x.DurationsInNanoseconds.Any(d => d < Duration.Zero))));
+            Assert.Equal([b], await IdsAsync(mine.Where(x => x.DurationsInNanoseconds.Any(d => d.SubsecondNanoseconds == 1))));
+            Assert.Equal([a], await IdsAsync(mine.Where(x => x.Json.DurationAsBigInt > day)));
+            Assert.Equal([a], await IdsAsync(mine.Where(x => x.Json.DurationAsBigInt.Days == 1 && x.Json.DurationAsBigInt.SubsecondNanoseconds == 1)));
+            Assert.Equal([a], await IdsAsync(mine.Where(x => x.Json.DurationAsDateTime2.Hours == -2)));
+            Assert.Equal([a], await IdsAsync(mine.Where(x => x.Json.DurationAsDateTime2 < DurationExtensions.PlusHours(x.Json.DurationAsBigInt, -50))));
+            Assert.Equal([a], await IdsAsync(mine.Where(x => x.Json.DurationAsText == hundredDays)));
+
+            var projected = await mine.OrderBy(x => x.Id).Select(x => DurationExtensions.PlusHours(x.Json.DurationAsBigInt, 1)).ToListAsync();
+            Assert.Equal([Duration.FromHours(26) + Duration.Epsilon, Duration.FromMinutes(65)], projected);
+        }
 
         // ---- Round trips ----
 

@@ -38,15 +38,26 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
-            // The list properties need no configuration; EF Core maps them to JSON arrays by convention.
-            // No seed data: the tests insert their own rows inside a transaction that is rolled back.
-            modelBuilder.Entity<NodaTimeCollections>()
-                .ComplexProperty(x => x.Json, b => b.ToJson());
+            ConfigureMappings(modelBuilder);
+            SeedData(modelBuilder);
+        }
 
-            modelBuilder.Entity<SupportedNodaTypes>()
-                .HasData(
-                    CreateSupportedNodaTypes(1, withNullables: true),
-                    CreateSupportedNodaTypes(2, withNullables: false));
+        /// <summary>The column configuration without the seed data. CompiledModelTests builds its compiled model from this too.</summary>
+        public static void ConfigureMappings(ModelBuilder modelBuilder)
+        {
+            // EF Core maps the list properties to JSON arrays by convention; DurationsInNanoseconds stores its elements
+            // as bigint (#38). No seed data here: the tests insert their own rows inside a transaction that is rolled back.
+            modelBuilder.Entity<NodaTimeCollections>(entity =>
+            {
+                entity.PrimitiveCollection(x => x.DurationsInNanoseconds).ElementType().HasStoreType("bigint");
+                entity.ComplexProperty(x => x.Json, b =>
+                {
+                    b.ToJson();
+                    b.Property(x => x.DurationAsBigInt).HasColumnType("bigint");
+                    b.Property(x => x.DurationAsDateTime2).HasColumnType("datetime2");
+                    b.Property(x => x.DurationAsText).HasColumnType("nvarchar(28)");
+                });
+            });
 
             modelBuilder.Entity<PrecisionNodaTypes>(entity =>
             {
@@ -67,10 +78,6 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
                 entity.Property(x => x.LocalTimeWithPrecision2).HasPrecision(2);
                 entity.Property(x => x.DurationAsTimeOf3).HasColumnType("time(3)");
                 entity.Property(x => x.DurationWithPrecision2).HasPrecision(2);
-
-                entity.HasData(
-                    CreatePrecisionNodaTypes(1, new LocalDateTime(2019, 1, 1, 8, 0)),
-                    CreatePrecisionNodaTypes(2, new LocalDateTime(2019, 7, 1, 14, 30)));
             });
 
             modelBuilder.Entity<DurationStorageTypes>(entity =>
@@ -79,8 +86,22 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
                 entity.Property(x => x.Int).HasColumnType("int");
                 entity.Property(x => x.DateTime2).HasColumnType("datetime2");
                 entity.Property(x => x.Text).HasColumnType("nvarchar(28)");
-                entity.HasData(DurationStorageRows);
             });
+        }
+
+        private static void SeedData(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<SupportedNodaTypes>()
+                .HasData(
+                    CreateSupportedNodaTypes(1, withNullables: true),
+                    CreateSupportedNodaTypes(2, withNullables: false));
+
+            modelBuilder.Entity<PrecisionNodaTypes>()
+                .HasData(
+                    CreatePrecisionNodaTypes(1, new LocalDateTime(2019, 1, 1, 8, 0)),
+                    CreatePrecisionNodaTypes(2, new LocalDateTime(2019, 7, 1, 14, 30)));
+
+            modelBuilder.Entity<DurationStorageTypes>().HasData(DurationStorageRows);
 
             modelBuilder.Entity<Race>()
                 .HasData(
@@ -129,7 +150,7 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
         }
 
         private static readonly Duration WithNanoseconds = Duration.FromHours(1) + Duration.FromMinutes(30) + Duration.FromSeconds(15) + Duration.FromNanoseconds(123_456_789);
-        private static readonly Duration NegativeWithFraction = -(Duration.FromHours(26) + Duration.FromMinutes(3) + Duration.FromMilliseconds(500));
+        public static readonly Duration NegativeWithFraction = -(Duration.FromHours(26) + Duration.FromMinutes(3) + Duration.FromMilliseconds(500));
 
         /// <summary>
         /// Values as written; what comes back is truncated to 100ns for time and datetime2, and to whole seconds for
