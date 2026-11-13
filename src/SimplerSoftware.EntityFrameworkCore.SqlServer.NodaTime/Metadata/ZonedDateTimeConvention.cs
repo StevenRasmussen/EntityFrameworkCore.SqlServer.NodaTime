@@ -14,11 +14,18 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Metadata
     /// <summary>
     /// Maps every <see cref="ZonedDateTime"/> property, on an entity type or a complex type, as a complex type over the two
     /// fields a ZonedDateTime is made of (#22): its OffsetDateTime, in a datetimeoffset column named after the property
-    /// ("Start"), and its zone, in a column for the zone ID ("Start_Zone"). Explicit configuration of the property, such as
-    /// the application's own value converter, or ignoring it, takes precedence as usual.
+    /// ("Start"), and its zone, in a column for the zone ID ("Start_Zone"). The application's own mapping takes precedence:
+    /// a property ignored, or given a value converter, whether by itself or for every ZonedDateTime in ConfigureConventions.
     /// </summary>
     internal sealed class ZonedDateTimeConvention : IEntityTypeAddedConvention, IComplexPropertyAddedConvention, IModelFinalizingConvention
     {
+        private readonly IMemberClassifier _memberClassifier;
+
+        public ZonedDateTimeConvention(IMemberClassifier memberClassifier)
+        {
+            _memberClassifier = memberClassifier;
+        }
+
         /// <summary>The name of the property mapped to a ZonedDateTime's OffsetDateTime; queries use it with EF.Property.</summary>
         internal const string OffsetDateTimePropertyName = "offsetDateTime";
 
@@ -40,14 +47,23 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Metadata
                 AddZonedDateTimeProperties(complexType.Builder);
         }
 
-        private static void AddZonedDateTimeProperties(IConventionTypeBaseBuilder typeBuilder)
+        private void AddZonedDateTimeProperties(IConventionTypeBaseBuilder typeBuilder)
         {
             var type = typeBuilder.Metadata;
+
+            // IgnoreAny<ZonedDateTime>() in ConfigureConventions.
+            if (type.Model.IsIgnoredType(typeof(ZonedDateTime)))
+                return;
             foreach (var property in PublicProperties(type.ClrType))
             {
+                // Not one the application maps itself: one ignored (by name, or with IgnoreAny<ZonedDateTime?>()), or one
+                // EF Core maps as an ordinary property, as it does when ConfigureConventions gives ZonedDateTime a value
+                // converter (Properties<ZonedDateTime>().HaveConversion(...)) or a type mapping.
                 if ((property.PropertyType != typeof(ZonedDateTime) && property.PropertyType != typeof(ZonedDateTime?))
                     || !property.CanRead || !property.CanWrite
-                    || type.IsIgnored(property.Name))
+                    || type.IsIgnored(property.Name)
+                    || type.Model.IsIgnoredType(property.PropertyType)
+                    || _memberClassifier.IsCandidatePrimitiveProperty(property, type.Model, useAttributes: true, out _, out _, out _))
                 {
                     continue;
                 }
@@ -60,7 +76,7 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Metadata
                         + "for example with a value converter, or ignore it.");
                 }
 
-                // Null when the property has been configured otherwise, e.g. ignored or given a value converter.
+                // Null when the property has been configured otherwise, at a higher level than a convention.
                 var complexProperty = typeBuilder.ComplexProperty(property);
                 if (complexProperty == null)
                     continue;
@@ -146,9 +162,16 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Metadata
 
     internal sealed class NodaTimeConventionSetPlugin : IConventionSetPlugin
     {
+        private readonly ProviderConventionSetBuilderDependencies _dependencies;
+
+        public NodaTimeConventionSetPlugin(ProviderConventionSetBuilderDependencies dependencies)
+        {
+            _dependencies = dependencies;
+        }
+
         public ConventionSet ModifyConventions(ConventionSet conventionSet)
         {
-            var convention = new ZonedDateTimeConvention();
+            var convention = new ZonedDateTimeConvention(_dependencies.MemberClassifier);
             conventionSet.EntityTypeAddedConventions.Add(convention);
             conventionSet.ComplexPropertyAddedConventions.Add(convention);
             // First, so that EF Core's own finalizing conventions (such as making column names unique) see the names.

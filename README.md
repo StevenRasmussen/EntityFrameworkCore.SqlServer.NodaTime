@@ -106,7 +106,7 @@ Things to know:
 - **Seeding:** `HasData` can't seed a `ZonedDateTime`, since EF Core can't seed complex types.
 - **Methods in a projection:** EF Core can't run a method on a `ZonedDateTime` (or any struct complex type) at the end of a query, such as `Select(x => x.Start.WithZone(zone))`. Select the `ZonedDateTime` and call the method afterwards.
 - **A default `ZonedDateTime`** (0001-01-01, with no zone set) is saved and read back as UTC, the zone NodaTime gives it.
-- **How it's mapped:** through `ZonedDateTime`'s two private fields, its `OffsetDateTime` and its zone. A property you've already mapped yourself, for example with a value converter, keeps your mapping.
+- **How it's mapped:** through `ZonedDateTime`'s two private fields, its `OffsetDateTime` and its zone. A property you've already mapped yourself keeps your mapping: one with a value converter, on the property or for every `ZonedDateTime` with `Properties<ZonedDateTime>().HaveConversion(...)` in `ConfigureConventions`, or one ignored, including with `IgnoreAny<ZonedDateTime>()`.
 
 ## Sponsors
 
