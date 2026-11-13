@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NodaTime;
+using System;
 
 namespace Microsoft.EntityFrameworkCore.SqlServer.Storage
 {
@@ -19,7 +20,14 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Storage
         {
             // Integer division truncates toward zero. A duration too long for nanoseconds in a long is far too long
             // for seconds in an int, so ToInt64Nanoseconds throwing for it is the right outcome too.
-            return checked((int)(duration.ToInt64Nanoseconds() / NodaConstants.NanosecondsPerSecond));
+            try
+            {
+                return checked((int)(duration.ToInt64Nanoseconds() / NodaConstants.NanosecondsPerSecond));
+            }
+            catch (OverflowException exception)
+            {
+                throw new OverflowException($"A Duration stored as int (whole seconds) must be within about ±68 years; {duration} isn't.", exception);
+            }
         }
 
         public static Duration fromProvider(int seconds)

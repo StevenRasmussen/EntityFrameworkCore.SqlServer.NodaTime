@@ -52,8 +52,8 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
 
             var storage = DurationSqlTranslator.StorageOf(instance);
 
-            // bigint or int: integer arithmetic, which also handles 24 hours or more and negative durations.
-            if (storage is DurationStorage.Nanoseconds or DurationStorage.Seconds)
+            // bigint, int or datetime2: integer arithmetic, which also handles 24 hours or more and negative durations.
+            if (DurationSqlTranslator.HasArithmeticComponents(storage))
                 return _durations.Component(instance, component.NanosecondsPerUnit, component.Modulo, returnType);
 
             // DATEPART rejects 'day' for a time value, so count the whole days from 1900-01-01 instead: SQL Server

@@ -62,7 +62,7 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         [InlineData(nameof(Entity.Duration), "smallint")]
         [InlineData(nameof(Entity.Duration), "decimal(20, 0)")]
         [InlineData(nameof(Entity.Duration), "nvarchar(40)")]
-        [InlineData(nameof(Entity.Duration), "datetime2")]
+        [InlineData(nameof(Entity.Duration), "datetime")]
         [InlineData(nameof(Entity.Instant), "nvarchar(40)")]
         [InlineData(nameof(Entity.Instant), "BIGINT")]
         [InlineData(nameof(Entity.Date), "int")]
@@ -110,6 +110,7 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         [InlineData(nameof(Entity.Instant), "datetime2", "datetime2(3)")]
         [InlineData(nameof(Entity.Instant), "DATETIME2", "datetime2(3)")]
         [InlineData(nameof(Entity.Duration), "time", "time(3)")]
+        [InlineData(nameof(Entity.Duration), "datetime2", "datetime2(3)")]
         // These take no precision; datetime(3) or smalldatetime(3) would be invalid SQL.
         [InlineData(nameof(Entity.Date), "date", "date")]
         [InlineData(nameof(Entity.Instant), "datetime", "datetime")]

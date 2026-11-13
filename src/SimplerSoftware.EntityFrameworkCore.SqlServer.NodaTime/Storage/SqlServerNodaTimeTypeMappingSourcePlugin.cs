@@ -25,6 +25,7 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
         private readonly DurationTypeMapping _durationTypeMapping = new DurationTypeMapping();
         private readonly DurationBigIntTypeMapping _durationBigIntTypeMapping = new DurationBigIntTypeMapping();
         private readonly DurationIntTypeMapping _durationIntTypeMapping = new DurationIntTypeMapping();
+        private readonly DurationDateTime2TypeMapping _durationDateTime2TypeMapping = new DurationDateTime2TypeMapping();
 
         private readonly static List<Type> _hasPrecisionTypes = new List<Type>
         {
@@ -66,9 +67,10 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
             this.AddTypeMappingToDictionaries(this._localDateTypeMapping);
             this.AddTypeMappingToDictionaries(this._localTimeTypeMapping);
             this.AddTypeMappingToDictionaries(this._durationTypeMapping);
-            // Only used when the column type is set to bigint or int (#38); time, above, stays the default for Duration.
+            // Only used when the column type is set to bigint, int or datetime2 (#38); time, above, stays the default for Duration.
             this.AddTypeMappingToDictionaries(this._durationBigIntTypeMapping);
             this.AddTypeMappingToDictionaries(this._durationIntTypeMapping);
+            this.AddTypeMappingToDictionaries(this._durationDateTime2TypeMapping);
             // SQL Server's synonym for int, which EF Core also accepts.
             this.StoreTypeMappings["integer"] = new List<RelationalTypeMapping> { this._durationIntTypeMapping };
         }

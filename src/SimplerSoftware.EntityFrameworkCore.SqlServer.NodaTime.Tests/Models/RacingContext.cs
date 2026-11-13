@@ -77,6 +77,7 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
             {
                 entity.Property(x => x.BigInt).HasColumnType("bigint");
                 entity.Property(x => x.Int).HasColumnType("int");
+                entity.Property(x => x.DateTime2).HasColumnType("datetime2");
                 entity.HasData(DurationStorageRows);
             });
 
@@ -130,22 +131,22 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
         private static readonly Duration NegativeWithFraction = -(Duration.FromHours(26) + Duration.FromMinutes(3) + Duration.FromMilliseconds(500));
 
         /// <summary>
-        /// Values as written; what comes back is truncated to 100ns for time and to whole seconds for int, which is
-        /// why the tests compare query results with .NET's answer for the values read back.
+        /// Values as written; what comes back is truncated to 100ns for time and datetime2, and to whole seconds for
+        /// int, which is why the tests compare query results with .NET's answer for the values read back.
         /// </summary>
         public static readonly DurationStorageTypes[] DurationStorageRows =
         [
-            new() { Id = 1, Time = Duration.Zero, BigInt = Duration.Zero, Int = Duration.Zero },
-            new() { Id = 2, Time = Duration.FromHours(1), BigInt = Duration.FromHours(1), Int = Duration.FromHours(1) },
-            new() { Id = 3, Time = WithNanoseconds, BigInt = WithNanoseconds, Int = WithNanoseconds },
-            new() { Id = 4, Time = Duration.FromDays(1) - Duration.FromNanoseconds(100), BigInt = Duration.FromDays(1) - Duration.Epsilon, Int = Duration.FromDays(1) - Duration.Epsilon },
+            new() { Id = 1, Time = Duration.Zero, BigInt = Duration.Zero, Int = Duration.Zero, DateTime2 = Duration.Zero },
+            new() { Id = 2, Time = Duration.FromHours(1), BigInt = Duration.FromHours(1), Int = Duration.FromHours(1), DateTime2 = Duration.FromHours(1) },
+            new() { Id = 3, Time = WithNanoseconds, BigInt = WithNanoseconds, Int = WithNanoseconds, DateTime2 = WithNanoseconds },
+            new() { Id = 4, Time = Duration.FromDays(1) - Duration.FromNanoseconds(100), BigInt = Duration.FromDays(1) - Duration.Epsilon, Int = Duration.FromDays(1) - Duration.Epsilon, DateTime2 = Duration.FromDays(1) - Duration.Epsilon },
             new() { Id = 5 },
-            new() { Id = 6, Time = Duration.FromHours(12), BigInt = Duration.FromHours(25), Int = Duration.FromHours(25) },
-            new() { Id = 7, BigInt = NegativeWithFraction, Int = NegativeWithFraction },
-            new() { Id = 8, Time = Duration.FromHours(23), BigInt = Duration.FromDays(100) + Duration.Epsilon, Int = Duration.FromDays(100) },
-            new() { Id = 9, BigInt = -Duration.FromMilliseconds(1500), Int = -Duration.FromMilliseconds(1500) },
-            new() { Id = 10, Time = Duration.FromHours(6), BigInt = Duration.FromDays(100 * 365) },
-            new() { Id = 11, Time = Duration.FromMinutes(30), BigInt = -Duration.FromMinutes(30), Int = Duration.FromMinutes(30) },
+            new() { Id = 6, Time = Duration.FromHours(12), BigInt = Duration.FromHours(25), Int = Duration.FromHours(25), DateTime2 = Duration.FromHours(25) },
+            new() { Id = 7, BigInt = NegativeWithFraction, Int = NegativeWithFraction, DateTime2 = NegativeWithFraction },
+            new() { Id = 8, Time = Duration.FromHours(23), BigInt = Duration.FromDays(100) + Duration.Epsilon, Int = Duration.FromDays(100), DateTime2 = Duration.FromDays(100) + Duration.Epsilon },
+            new() { Id = 9, BigInt = -Duration.FromMilliseconds(1500), Int = -Duration.FromMilliseconds(1500), DateTime2 = -Duration.FromMilliseconds(1500) },
+            new() { Id = 10, Time = Duration.FromHours(6), BigInt = Duration.FromDays(100 * 365), DateTime2 = Duration.FromDays(100 * 365) },
+            new() { Id = 11, Time = Duration.FromMinutes(30), BigInt = -Duration.FromMinutes(30), Int = Duration.FromMinutes(30), DateTime2 = -Duration.FromMinutes(30) },
         ];
 
         /// <summary>Row 1 has every nullable property populated; row 2 has every nullable property null.</summary>

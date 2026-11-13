@@ -192,6 +192,18 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
             AssertResult(mode, db, [6, 9], ids, constantStart: "90000");
         }
 
+        [Theory]
+        [MemberData(nameof(Modes))]
+        public async Task Duration_stored_as_datetime2_Contains(string mode)
+        {
+            var values = new[] { Duration.FromHours(25), -Duration.FromMilliseconds(1500), Duration.FromHours(3) };
+            using var db = CreateContext(mode);
+
+            var ids = await db.DurationStorageTypes.Where(x => values.Contains(x.DateTime2.Value)).Select(x => x.Id).OrderBy(id => id).ToListAsync();
+
+            AssertResult(mode, db, [6, 9], ids, constantStart: "'1900-01-02T01:00:00");
+        }
+
         [Fact]
         public async Task Contains_with_empty_list_returns_nothing()
         {

@@ -32,6 +32,8 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
 
             public Duration? Int { get; set; }
 
+            public Duration? DateTime2 { get; set; }
+
             /// <summary>The user's own converter, which the library leaves alone.</summary>
             public Duration Ticks { get; set; }
         }
@@ -59,6 +61,7 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
                     {
                         entity.Property(x => x.BigInt).HasColumnType("bigint");
                         entity.Property(x => x.Int).HasColumnType("int");
+                        entity.Property(x => x.DateTime2).HasColumnType("datetime2");
                     }
                     entity.Property(x => x.Ticks).HasConversion(new ValueConverter<Duration, long>(d => d.BclCompatibleTicks, t => Duration.FromTicks(t)));
                 });
@@ -82,6 +85,9 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         [InlineData("Int", typeof(DurationIntTypeMapping), "int")]
         [InlineData("integer", typeof(DurationIntTypeMapping), "int")]
         [InlineData("time", typeof(DurationTypeMapping), "time")]
+        [InlineData("datetime2", typeof(DurationDateTime2TypeMapping), "datetime2")]
+        [InlineData("DATETIME2", typeof(DurationDateTime2TypeMapping), "datetime2")]
+        [InlineData("datetime2(3)", typeof(DurationDateTime2TypeMapping), "datetime2(3)")]
         public void Column_type_chooses_the_storage(string columnType, Type expectedMappingType, string expectedStoreType)
         {
             var mapping = MappingFor(columnType);
@@ -128,6 +134,8 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         [InlineData("int", 25 * 3600, "90000")]
         [InlineData("int", 1.7, "1")]
         [InlineData("int", -1.7, "-1")]
+        [InlineData("datetime2", 25 * 3600, "'1900-01-02T01:00:00.0000000'")]
+        [InlineData("datetime2", -3600.5, "'1899-12-31T22:59:59.5000000'")]
         public void Literal(string columnType, double seconds, string expected)
         {
             Assert.Equal(expected, MappingFor(columnType).GenerateSqlLiteral(Duration.FromSeconds(seconds)));
@@ -148,7 +156,7 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         public void Int_out_of_range_throws()
         {
             Assert.Equal(int.MaxValue, DurationSecondsValueConverter.toProvider(Duration.FromSeconds(int.MaxValue)));
-            Assert.Throws<OverflowException>(() => DurationSecondsValueConverter.toProvider(Duration.FromSeconds(int.MaxValue + 1L)));
+            Assert.Contains("stored as int", Assert.Throws<OverflowException>(() => DurationSecondsValueConverter.toProvider(Duration.FromSeconds(int.MaxValue + 1L))).Message);
             Assert.Throws<OverflowException>(() => DurationSecondsValueConverter.toProvider(Duration.FromDays(-25_000)));
         }
 
@@ -157,14 +165,30 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         public void BigInt_out_of_range_throws()
         {
             Assert.Equal(long.MaxValue, DurationNanosecondsValueConverter.toProvider(Duration.FromNanoseconds(long.MaxValue)));
-            Assert.Throws<OverflowException>(() => DurationNanosecondsValueConverter.toProvider(Duration.FromDays(106_752)));
+            Assert.Contains("stored as bigint", Assert.Throws<OverflowException>(() => DurationNanosecondsValueConverter.toProvider(Duration.FromDays(106_752))).Message);
             Assert.Throws<OverflowException>(() => DurationNanosecondsValueConverter.toProvider(Duration.FromDays(-106_752)));
         }
 
         /// <summary>Used for lists of Durations (e.g. list.Contains(x.BigInt)) and JSON columns: numbers, not time strings.</summary>
+        /// <summary>
+        /// datetime2 holds the offset from 1900-01-01, from 0001-01-01 to 9999-12-31: about -1899 to +8099 years.
+        /// Sub-100ns digits are truncated toward zero, as for time.
+        /// </summary>
+        [Fact]
+        public void DateTime2_range_and_truncation()
+        {
+            Assert.Equal(new DateTime(1900, 1, 2, 1, 0, 0), DurationDateTime2ValueConverter.toProvider(Duration.FromHours(25)));
+            Assert.Equal(new DateTime(1899, 12, 31, 23, 59, 59).AddTicks(9_999_999), DurationDateTime2ValueConverter.toProvider(-Duration.FromNanoseconds(150)));
+            Assert.Equal(Duration.FromDays(-693_595), DurationDateTime2ValueConverter.fromProvider(DateTime.MinValue));
+            var tooLong = Assert.Throws<ArgumentOutOfRangeException>(() => DurationDateTime2ValueConverter.toProvider(Duration.FromDays(-693_596)));
+            Assert.Contains("stored as datetime2", tooLong.Message);
+            Assert.Throws<ArgumentOutOfRangeException>(() => DurationDateTime2ValueConverter.toProvider(Duration.FromDays(2_958_465)));
+        }
+
         [Theory]
         [InlineData("bigint", "90000000000000")]
         [InlineData("int", "90000")]
+        [InlineData("datetime2", "\"1900-01-02T01:00:00\"")]
         public void Json(string columnType, string expectedJson)
         {
             var readerWriter = MappingFor(columnType).JsonValueReaderWriter!;
@@ -180,6 +204,25 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
             using var db = new Context();
             return query(db.Set<Entity>()).ToQueryString();
         }
+
+        /// <summary>Components of a datetime2 count ticks, which a bigint holds for the whole datetime2 range.</summary>
+        [Fact]
+        public void Hours_of_datetime2_counts_ticks()
+            => Assert.Contains(
+                "CAST(((DATEDIFF_BIG(microsecond, '19000101', [e].[DateTime2]) * 10 + (DATEPART(nanosecond, [e].[DateTime2]) / 100) % 10) / CAST(36000000000 AS bigint)) % 24 AS int)",
+                Sql(q => q.Select(x => x.DateTime2.Value.Hours)));
+
+        /// <summary>A time and a datetime2 compare as a datetime2, so an index on the datetime2 can still be used.</summary>
+        [Fact]
+        public void Comparing_time_with_datetime2_casts_the_time()
+            => Assert.Contains("WHERE CAST([e].[Time] AS datetime2) < [e].[DateTime2]", Sql(q => q.Where(x => x.Time < x.DateTime2).Select(x => x.Id)));
+
+        /// <summary>An int always fits a datetime2, so they compare as datetime2s rather than nanoseconds, which could overflow.</summary>
+        [Fact]
+        public void Comparing_int_with_datetime2_converts_the_int()
+            => Assert.Contains(
+                "WHERE DATEADD(second, [e].[Int], CAST('19000101' AS datetime2)) = [e].[DateTime2]",
+                Sql(q => q.Where(x => x.Int == x.DateTime2).Select(x => x.Id)));
 
         [Fact]
         public void Hours_of_bigint()

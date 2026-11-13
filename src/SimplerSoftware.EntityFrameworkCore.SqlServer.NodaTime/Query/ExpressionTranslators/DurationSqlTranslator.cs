@@ -25,22 +25,27 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
         /// <summary>int holding whole seconds: HasColumnType("int").</summary>
         Seconds,
 
+        /// <summary>datetime2 holding the offset from 1900-01-01: HasColumnType("datetime2").</summary>
+        DateTime2,
+
         /// <summary>Anything else, such as the user's own value converter. Translated as it was before #38.</summary>
         Other,
     }
 
     /// <summary>
-    /// Builds the SQL for <see cref="Duration"/> values stored as time, bigint (nanoseconds) or int (seconds) (#38).
+    /// Builds the SQL for <see cref="Duration"/> values stored as time, bigint (nanoseconds), int (seconds) or
+    /// datetime2 (an offset from 1900-01-01) (#38).
     /// <para>
     /// Arithmetic results are always nanoseconds in a bigint, whatever the storage: they can then pass 24 hours or
     /// go negative, keep the full precision, and read back correctly. Durations stored differently are compared by
-    /// converting both to nanoseconds.
+    /// converting both to nanoseconds, or a time to a datetime2 when the other is one.
     /// </para>
     /// </summary>
     internal sealed class DurationSqlTranslator
     {
         private static readonly bool[] _dateDiffPropagatesNullability = { false, false, true };
         private static readonly bool[] _dateAddPropagatesNullability = { false, true, true };
+        private static readonly bool[] _datePartPropagatesNullability = { false, true };
 
         private readonly ISqlExpressionFactory _sqlExpressionFactory;
         private readonly RelationalTypeMapping _longTypeMapping;
@@ -64,6 +69,7 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
             null => DurationStorage.Time,
             DurationBigIntTypeMapping => DurationStorage.Nanoseconds,
             DurationIntTypeMapping => DurationStorage.Seconds,
+            DurationDateTime2TypeMapping => DurationStorage.DateTime2,
             DurationTypeMapping => DurationStorage.Time,
             // e.g. the user's own converter to TimeSpan
             _ when string.Equals(typeMapping.StoreTypeNameBase?.Trim(), SqlServerDateTimeTypes.Time, StringComparison.OrdinalIgnoreCase) => DurationStorage.Time,
@@ -71,6 +77,10 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
         };
 
         public static DurationStorage StorageOf(SqlExpression duration) => StorageOf(duration.TypeMapping);
+
+        /// <summary>Whether Days, Hours and so on are computed with integer arithmetic; DATEPART only works for a time.</summary>
+        public static bool HasArithmeticComponents(DurationStorage storage)
+            => storage is DurationStorage.Nanoseconds or DurationStorage.Seconds or DurationStorage.DateTime2;
 
         /// <summary>
         /// The duration as a number of nanoseconds, typed as a Duration stored in a bigint; null if its storage isn't
@@ -96,7 +106,9 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
                         DurationBigIntTypeMapping.Default);
 
                 case DurationStorage.Time:
-                    // SQL Server treats a time value as being on 1900-01-01, so this counts the nanoseconds since midnight.
+                case DurationStorage.DateTime2:
+                    // SQL Server treats a time value as being on 1900-01-01, so for a time this counts the nanoseconds
+                    // since midnight; a datetime2 holds the offset from 1900-01-01.
                     return _sqlExpressionFactory.Function(
                         "DATEDIFF_BIG",
                         new SqlExpression[]
@@ -121,37 +133,84 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
         /// </summary>
         public SqlExpression Component(SqlExpression duration, long nanosecondsPerUnit, long? modulo, Type returnType)
         {
+            // Work in the storage's own unit where possible (whole seconds for int, ticks for datetime2): it can't
+            // overflow, unlike nanoseconds past about 292 years.
             SqlExpression value;
-            long divisor;
+            long unit;
             Type type;
             RelationalTypeMapping typeMapping;
-
-            if (StorageOf(duration) == DurationStorage.Seconds && nanosecondsPerUnit % NodaConstants.NanosecondsPerSecond == 0)
+            switch (StorageOf(duration))
             {
-                // Whole seconds: work in the int itself.
-                value = duration;
-                divisor = nanosecondsPerUnit / NodaConstants.NanosecondsPerSecond;
-                type = returnType;
-                typeMapping = _intTypeMapping;
+                case DurationStorage.Seconds:
+                    (value, unit, type, typeMapping) = (duration, NodaConstants.NanosecondsPerSecond, returnType, _intTypeMapping);
+                    break;
+                case DurationStorage.DateTime2:
+                    (value, unit, type, typeMapping) = (Ticks(duration), NodaConstants.NanosecondsPerTick, typeof(long), _longTypeMapping);
+                    break;
+                default:
+                    (value, unit, type, typeMapping) = (ToNanoseconds(duration), 1, typeof(long), _longTypeMapping);
+                    break;
+            }
+
+            if (value == null)
+                return null;
+
+            if (nanosecondsPerUnit % unit == 0)
+            {
+                // e.g. Hours from ticks: ticks / 36000000000 % 24
+                var divisor = nanosecondsPerUnit / unit;
+                if (divisor != 1)
+                    value = new SqlBinaryExpression(ExpressionType.Divide, value, Integer(divisor), type, typeMapping);
+                if (modulo.HasValue)
+                    value = new SqlBinaryExpression(ExpressionType.Modulo, value, Integer(modulo.Value), type, typeMapping);
             }
             else
             {
-                value = ToNanoseconds(duration);
-                if (value == null)
-                    return null;
-                divisor = nanosecondsPerUnit;
-                type = typeof(long);
-                typeMapping = _longTypeMapping;
+                // A component finer than the unit, e.g. SubsecondNanoseconds from ticks: ticks % 10000000 * 100.
+                // (Every such component has a modulo that is a whole number of units.)
+                value = new SqlBinaryExpression(ExpressionType.Modulo, value, Integer(modulo.Value * nanosecondsPerUnit / unit), type, typeMapping);
+                value = new SqlBinaryExpression(ExpressionType.Multiply, value, Integer(unit / nanosecondsPerUnit), type, typeMapping);
             }
-
-            if (divisor != 1)
-                value = new SqlBinaryExpression(ExpressionType.Divide, value, Integer(divisor), type, typeMapping);
-            if (modulo.HasValue)
-                value = new SqlBinaryExpression(ExpressionType.Modulo, value, Integer(modulo.Value), type, typeMapping);
 
             return type == typeof(long)
                 ? _sqlExpressionFactory.Convert(value, returnType, _intTypeMapping)
                 : value;
+        }
+
+        /// <summary>
+        /// A datetime2's offset from 1900-01-01 in ticks (100ns), which a bigint holds for the whole datetime2 range:
+        /// DATEDIFF_BIG(microsecond, '19000101', x) * 10 + DATEPART(nanosecond, x) / 100 % 10. DATEDIFF counts the
+        /// microsecond boundaries crossed, rounding down, and DATEPART gives the rest, which is never negative.
+        /// </summary>
+        private SqlExpression Ticks(SqlExpression dateTime2)
+        {
+            var microseconds = _sqlExpressionFactory.Function(
+                "DATEDIFF_BIG",
+                new SqlExpression[] { new SqlFragmentExpression("microsecond"), new SqlFragmentExpression("'19000101'"), dateTime2 },
+                nullable: true,
+                argumentsPropagateNullability: _dateDiffPropagatesNullability,
+                typeof(long),
+                _longTypeMapping);
+
+            var nanosecondPart = _sqlExpressionFactory.Function(
+                "DATEPART",
+                new SqlExpression[] { new SqlFragmentExpression("nanosecond"), dateTime2 },
+                nullable: true,
+                argumentsPropagateNullability: _datePartPropagatesNullability,
+                typeof(int),
+                _intTypeMapping);
+
+            return new SqlBinaryExpression(
+                ExpressionType.Add,
+                new SqlBinaryExpression(ExpressionType.Multiply, microseconds, Integer(10), typeof(long), _longTypeMapping),
+                new SqlBinaryExpression(
+                    ExpressionType.Modulo,
+                    new SqlBinaryExpression(ExpressionType.Divide, nanosecondPart, Integer(100), typeof(int), _intTypeMapping),
+                    Integer(10),
+                    typeof(int),
+                    _intTypeMapping),
+                typeof(long),
+                _longTypeMapping);
         }
 
         /// <summary>
@@ -203,18 +262,17 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
 
         /// <summary>
         /// A comparison between two durations. When they are stored differently (e.g. time and bigint, or the result of
-        /// PlusHours and a time column), both are converted to nanoseconds; otherwise it is the plain comparison.
+        /// PlusHours and a time column), both are converted to the same storage; otherwise it is the plain comparison.
         /// </summary>
         public SqlExpression Compare(ExpressionType operatorType, SqlExpression left, SqlExpression right, IDiagnosticsLogger<DbLoggerCategory.Query> logger)
         {
             if (left.TypeMapping != null && right.TypeMapping != null)
             {
-                var leftStorage = StorageOf(left);
-                var rightStorage = StorageOf(right);
-                if (leftStorage != rightStorage && leftStorage != DurationStorage.Other && rightStorage != DurationStorage.Other)
+                var common = CommonStorage(new[] { left, right });
+                if (common != null)
                 {
-                    left = ToNanoseconds(left);
-                    right = ToNanoseconds(right);
+                    left = ConvertTo(left, common.Value);
+                    right = ConvertTo(right, common.Value);
                 }
             }
             else
@@ -278,15 +336,20 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
             if (valueStorage == columnStorage || valueStorage == DurationStorage.Other || columnStorage == DurationStorage.Other)
                 return value;
 
+            if (columnStorage == DurationStorage.DateTime2 && valueStorage is DurationStorage.Time or DurationStorage.Seconds)
+                return AsDateTime2(value, columnTypeMapping);
+
             var nanoseconds = ToNanoseconds(value);
-            var wholeSeconds = new SqlBinaryExpression(ExpressionType.Divide, nanoseconds, Integer(NodaConstants.NanosecondsPerSecond), typeof(long), _longTypeMapping);
             switch (columnStorage)
             {
                 case DurationStorage.Nanoseconds:
                     return nanoseconds;
 
                 case DurationStorage.Seconds:
-                    return new SqlUnaryExpression(ExpressionType.Convert, wholeSeconds, typeof(Duration), columnTypeMapping);
+                    return new SqlUnaryExpression(ExpressionType.Convert, WholeSeconds(nanoseconds), typeof(Duration), columnTypeMapping);
+
+                case DurationStorage.DateTime2:
+                    return NanosecondsToDateTime2(nanoseconds, columnTypeMapping);
 
                 default:
                     // DATEADD(nanosecond, the rest truncated to 100ns, DATEADD(second, whole seconds, a time of 00:00)).
@@ -306,7 +369,7 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
                                     typeof(int),
                                     _intTypeMapping)),
                         },
-                        _sqlExpressionFactory.Convert(wholeSeconds, typeof(int), _intTypeMapping));
+                        _sqlExpressionFactory.Convert(WholeSeconds(nanoseconds), typeof(int), _intTypeMapping));
                     var subsecondNanoseconds = new SqlBinaryExpression(ExpressionType.Modulo, nanoseconds, Integer(NodaConstants.NanosecondsPerSecond), typeof(long), _longTypeMapping);
                     var subsecondTicks = new SqlBinaryExpression(
                         ExpressionType.Multiply,
@@ -345,26 +408,31 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
 
         /// <summary>
         /// A COALESCE or CASE between Durations (from ?? or ?:). When its branches are stored differently, they are all
-        /// converted to nanoseconds, since SQL needs them the same; otherwise it is left as it is.
+        /// converted to the same storage, since SQL needs them the same; otherwise it is left as it is.
         /// </summary>
         public SqlExpression SameStorage(SqlExpression expression, IDiagnosticsLogger<DbLoggerCategory.Query> logger)
         {
             switch (expression)
             {
                 case SqlFunctionExpression { Name: "COALESCE" } coalesce:
-                    if (!NeedNanoseconds(coalesce.Arguments))
+                {
+                    var common = CommonStorage(coalesce.Arguments);
+                    if (common == null)
                     {
                         WarnIfTruncatedToSeconds(coalesce.Arguments, logger);
                         return expression;
                     }
 
                     return coalesce
-                        .Update(coalesce.Instance, coalesce.Arguments.Select(ToNanoseconds).ToList())
-                        .ApplyTypeMapping(DurationBigIntTypeMapping.Default);
+                        .Update(coalesce.Instance, coalesce.Arguments.Select(a => ConvertTo(a, common.Value)).ToList())
+                        .ApplyTypeMapping(TypeMappingOf(common.Value));
+                }
 
                 case CaseExpression caseExpression:
+                {
                     var results = caseExpression.WhenClauses.Select(c => c.Result).Append(caseExpression.ElseResult).Where(r => r != null).ToList();
-                    if (!NeedNanoseconds(results))
+                    var common = CommonStorage(results);
+                    if (common == null)
                     {
                         WarnIfTruncatedToSeconds(results, logger);
                         return expression;
@@ -372,12 +440,102 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
 
                     return caseExpression.Update(
                         caseExpression.Operand,
-                        caseExpression.WhenClauses.Select(c => new CaseWhenClause(c.Test, ToNanoseconds(c.Result))).ToList(),
-                        caseExpression.ElseResult == null ? null : ToNanoseconds(caseExpression.ElseResult));
+                        caseExpression.WhenClauses.Select(c => new CaseWhenClause(c.Test, ConvertTo(c.Result, common.Value))).ToList(),
+                        caseExpression.ElseResult == null ? null : ConvertTo(caseExpression.ElseResult, common.Value));
+                }
 
                 default:
                     return expression;
             }
+        }
+
+        /// <summary>
+        /// The storage that durations stored differently should all be converted to. A datetime2 alongside time or int
+        /// values: datetime2, since those always fit one; that's exact, works for the whole datetime2 range, and an index
+        /// on the datetime2 can still be used. Otherwise nanoseconds. Null if they are all stored the same way, or one is
+        /// stored in a way we don't know (the user's own converter).
+        /// Expressions without a type mapping yet (parameters and constants) are left out.
+        /// </summary>
+        private static DurationStorage? CommonStorage(IEnumerable<SqlExpression> durations)
+        {
+            var storages = durations.Where(d => d.TypeMapping != null).Select(StorageOf).Distinct().ToList();
+            if (storages.Count <= 1 || storages.Contains(DurationStorage.Other))
+                return null;
+
+            return storages.Contains(DurationStorage.DateTime2)
+                && storages.All(s => s is DurationStorage.Time or DurationStorage.DateTime2 or DurationStorage.Seconds)
+                ? DurationStorage.DateTime2
+                : DurationStorage.Nanoseconds;
+        }
+
+        private static RelationalTypeMapping TypeMappingOf(DurationStorage storage)
+            => storage == DurationStorage.DateTime2 ? DurationDateTime2TypeMapping.Default : DurationBigIntTypeMapping.Default;
+
+        /// <summary>The duration in the given storage, which is datetime2 or nanoseconds (see <see cref="CommonStorage"/>).</summary>
+        private SqlExpression ConvertTo(SqlExpression duration, DurationStorage storage)
+        {
+            if (storage == DurationStorage.Nanoseconds)
+                return ToNanoseconds(duration);
+
+            if (duration.TypeMapping == null)
+                return _sqlExpressionFactory.ApplyTypeMapping(duration, DurationDateTime2TypeMapping.Default);
+
+            return StorageOf(duration) == DurationStorage.DateTime2 ? duration : AsDateTime2(duration, DurationDateTime2TypeMapping.Default);
+        }
+
+        /// <summary>
+        /// A time or int duration as a datetime2 offset from 1900-01-01. A time: CAST, since SQL Server puts a time on
+        /// 1900-01-01. Whole seconds: DATEADD(second, x, '19000101'); an int always fits.
+        /// </summary>
+        private SqlExpression AsDateTime2(SqlExpression duration, RelationalTypeMapping typeMapping)
+            => StorageOf(duration) == DurationStorage.Time
+                ? new SqlUnaryExpression(ExpressionType.Convert, duration, typeof(Duration), typeMapping)
+                : _sqlExpressionFactory.Function(
+                    "DATEADD",
+                    new SqlExpression[] { new SqlFragmentExpression("second"), duration, new SqlFragmentExpression("CAST('19000101' AS datetime2)") },
+                    nullable: true,
+                    argumentsPropagateNullability: _dateAddPropagatesNullability,
+                    typeof(Duration),
+                    typeMapping);
+
+        private SqlExpression WholeSeconds(SqlExpression nanoseconds)
+            => new SqlBinaryExpression(ExpressionType.Divide, nanoseconds, Integer(NodaConstants.NanosecondsPerSecond), typeof(long), _longTypeMapping);
+
+        /// <summary>
+        /// Nanoseconds as a datetime2 offset from 1900-01-01: whole days, then seconds, then the rest truncated to 100ns
+        /// (as saving a value truncates it; DATEADD would round). Each step fits the int DATEADD takes.
+        /// </summary>
+        private SqlExpression NanosecondsToDateTime2(SqlExpression nanoseconds, RelationalTypeMapping typeMapping)
+        {
+            SqlExpression Part(long divisor, long? modulo, long truncateTo = 1)
+            {
+                SqlExpression part = nanoseconds;
+                if (modulo.HasValue)
+                    part = new SqlBinaryExpression(ExpressionType.Modulo, part, Integer(modulo.Value), typeof(long), _longTypeMapping);
+                if (divisor != 1)
+                    part = new SqlBinaryExpression(ExpressionType.Divide, part, Integer(divisor), typeof(long), _longTypeMapping);
+                if (truncateTo != 1)
+                    part = new SqlBinaryExpression(
+                        ExpressionType.Multiply,
+                        new SqlBinaryExpression(ExpressionType.Divide, part, Integer(truncateTo), typeof(long), _longTypeMapping),
+                        Integer(truncateTo),
+                        typeof(long),
+                        _longTypeMapping);
+                return _sqlExpressionFactory.Convert(part, typeof(int), _intTypeMapping);
+            }
+
+            SqlExpression DateAdd(string datePart, SqlExpression number, SqlExpression date)
+                => _sqlExpressionFactory.Function(
+                    "DATEADD",
+                    new[] { new SqlFragmentExpression(datePart), number, date },
+                    nullable: true,
+                    argumentsPropagateNullability: _dateAddPropagatesNullability,
+                    typeof(Duration),
+                    typeMapping);
+
+            var days = DateAdd("day", Part(NodaConstants.NanosecondsPerDay, null), new SqlFragmentExpression("CAST('19000101' AS datetime2)"));
+            var seconds = DateAdd("second", Part(NodaConstants.NanosecondsPerSecond, NodaConstants.NanosecondsPerDay), days);
+            return DateAdd("nanosecond", Part(1, NodaConstants.NanosecondsPerSecond, truncateTo: NodaConstants.NanosecondsPerTick), seconds);
         }
 
         /// <summary>
@@ -404,13 +562,6 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
         }
 
         private static bool IsValue(SqlExpression expression) => expression is SqlParameterExpression or SqlConstantExpression;
-
-        /// <summary>Whether the branches are in more than one storage, all of which can be converted to nanoseconds.</summary>
-        private static bool NeedNanoseconds(IEnumerable<SqlExpression> branches)
-        {
-            var storages = branches.Where(b => b.TypeMapping != null).Select(StorageOf).Distinct().ToList();
-            return storages.Count > 1 && !storages.Contains(DurationStorage.Other);
-        }
 
         private static bool IsOther(SqlExpression duration)
             => duration.TypeMapping != null && StorageOf(duration) == DurationStorage.Other;

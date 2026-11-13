@@ -14,8 +14,9 @@ using Xunit;
 namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
 {
     /// <summary>
-    /// A Duration stored as time, bigint (nanoseconds) or int (seconds) (#38). Every query must give the same answer as
-    /// NodaTime does in .NET for the values read back from the database (time keeps 100ns, int whole seconds).
+    /// A Duration stored as time, bigint (nanoseconds), int (seconds) or datetime2 (offset from 1900-01-01) (#38).
+    /// Every query must give the same answer as NodaTime does in .NET for the values read back from the database
+    /// (time and datetime2 keep 100ns, int whole seconds).
     /// The rows are in <see cref="RacingContext.DurationStorageRows"/>; they include values of 24 hours or more,
     /// negative values and fractions of a second, which only bigint and int can hold.
     /// </summary>
@@ -29,7 +30,8 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         public static TheoryData<string> Columns => new(
             nameof(DurationStorageTypes.Time),
             nameof(DurationStorageTypes.BigInt),
-            nameof(DurationStorageTypes.Int));
+            nameof(DurationStorageTypes.Int),
+            nameof(DurationStorageTypes.DateTime2));
 
         // Components
 
@@ -273,6 +275,35 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
                 x => EF.Functions.DateDiffBigNanosecond(x.Time, x.BigInt),
                 x => DateDiff(x.Time.Value, x.BigInt.Value, 1));
 
+        /// <summary>A time and a datetime2 compare as a datetime2: SQL Server puts the time on 1900-01-01.</summary>
+        [Fact]
+        public Task Time_compared_with_datetime2()
+            => AssertSameAsDotNet(x => x.Time < x.DateTime2, x => x.Id);
+
+        [Fact]
+        public Task DateTime2_equal_to_int()
+            => AssertSameAsDotNet(x => x.DateTime2 == x.Int, x => x.Id);
+
+        [Fact]
+        public Task DateTime2_greater_than_bigint()
+            => AssertSameAsDotNet(x => x.DateTime2 > x.BigInt, x => x.Id);
+
+        [Fact]
+        public Task Coalesce_of_time_and_datetime2()
+            => AssertSameAsDotNet(x => true, x => x.Time ?? x.DateTime2);
+
+        [Fact]
+        public Task DateTime2_minus_time()
+            => AssertSameAsDotNet(x => x.DateTime2 != null && x.Time != null, x => x.DateTime2.Value - x.Time.Value);
+
+        /// <summary>SQL Server's DATEDIFF takes a time and a datetime2 together, on the same 1900-01-01 base.</summary>
+        [Fact]
+        public Task DateDiffHour_between_time_and_datetime2()
+            => AssertSameAsDotNet(
+                x => x.Time != null && x.DateTime2 != null,
+                x => EF.Functions.DateDiffHour(x.Time, x.DateTime2),
+                x => (int)DateDiff(x.Time.Value, x.DateTime2.Value, NodaConstants.NanosecondsPerHour));
+
         [Fact]
         public Task DateDiffMinute_between_int_and_bigint()
             => AssertSameAsDotNet(
@@ -399,6 +430,86 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
                 s => s.SetProperty(x => x.Time, x => x.BigInt),
                 (before, after) => Assert.Equal(Iso(Duration.FromTicks(before.BigInt.Value.BclCompatibleTicks)), Iso(after.Time.Value)));
 
+        [Fact]
+        public Task ExecuteUpdate_datetime2_with_PlusHours()
+            => AssertExecuteUpdate(
+                x => x.DateTime2 != null,
+                s => s.SetProperty(x => x.DateTime2, x => x.DateTime2.Value.PlusHours(-30)),
+                (before, after) => Assert.Equal(Iso(Ticks(before.DateTime2.Value - Duration.FromHours(30))), Iso(after.DateTime2.Value)));
+
+        [Fact]
+        public Task ExecuteUpdate_datetime2_from_a_time_column()
+            => AssertExecuteUpdate(
+                x => true,
+                s => s.SetProperty(x => x.DateTime2, x => x.Time),
+                (before, after) => Assert.Equal(before.Time, after.DateTime2));
+
+        [Fact]
+        public Task ExecuteUpdate_datetime2_from_a_bigint_column()
+            => AssertExecuteUpdate(
+                x => true,
+                s => s.SetProperty(x => x.DateTime2, x => x.BigInt),
+                (before, after) => Assert.Equal(before.BigInt.HasValue ? Ticks(before.BigInt.Value) : null, after.DateTime2));
+
+        [Fact]
+        public Task ExecuteUpdate_datetime2_from_an_int_column()
+            => AssertExecuteUpdate(
+                x => true,
+                s => s.SetProperty(x => x.DateTime2, x => x.Int),
+                (before, after) => Assert.Equal(before.Int, after.DateTime2));
+
+        [Fact]
+        public Task ExecuteUpdate_bigint_from_a_datetime2_column()
+            => AssertExecuteUpdate(
+                x => true,
+                s => s.SetProperty(x => x.BigInt, x => x.DateTime2),
+                (before, after) => Assert.Equal(before.DateTime2, after.BigInt));
+
+        /// <summary>
+        /// datetime2 holds about -1899 to +8099 years, far beyond a bigint of nanoseconds (about ±292 years).
+        /// Storing, comparing and the components work for all of it; arithmetic, being done in nanoseconds, doesn't.
+        /// </summary>
+        [Fact]
+        public async Task DateTime2_holds_durations_of_a_thousand_years()
+        {
+            var options = new DbContextOptionsBuilder<RacingContext>()
+                .UseSqlServer(this.SqlConnection.ConnectionString, x => Microsoft.EntityFrameworkCore.SqlServerDbContextOptionsBuilderExtensions.UseNodaTime(x))
+                .Options;
+            using var db = new RacingContext(options);
+            using var transaction = await db.Database.BeginTransactionAsync();
+            var long1 = Duration.FromDays(1000 * 365) + Duration.FromHours(5) + Duration.FromTicks(123);
+            var long2 = -(Duration.FromDays(1500 * 365) + Duration.FromMinutes(7) + Duration.FromTicks(45));
+            var added = new[] { new DurationStorageTypes { DateTime2 = long1, Int = Duration.FromSeconds(5) }, new DurationStorageTypes { DateTime2 = long2, Int = Duration.FromSeconds(5) } };
+            db.DurationStorageTypes.AddRange(added);
+            await db.SaveChangesAsync();
+            var ids = added.Select(x => x.Id).ToList();
+            var threshold = Duration.FromDays(900 * 365);
+
+            var rows = await db.DurationStorageTypes.AsNoTracking()
+                .Where(x => ids.Contains(x.Id))
+                .OrderBy(x => x.Id)
+                .Select(x => new
+                {
+                    x.DateTime2,
+                    x.DateTime2.Value.Days,
+                    x.DateTime2.Value.Hours,
+                    x.DateTime2.Value.Minutes,
+                    x.DateTime2.Value.SubsecondNanoseconds,
+                    Long = x.DateTime2 > threshold,
+                    // An int is converted to a datetime2 to compare, which can't overflow.
+                    LongerThanInt = x.DateTime2 > x.Int,
+                })
+                .ToListAsync();
+
+            Assert.Equal(
+                new[]
+                {
+                    (long1, long1.Days, long1.Hours, long1.Minutes, long1.SubsecondNanoseconds, true, true),
+                    (long2, long2.Days, long2.Hours, long2.Minutes, long2.SubsecondNanoseconds, false, false),
+                },
+                rows.Select(r => (r.DateTime2.Value, r.Days, r.Hours, r.Minutes, r.SubsecondNanoseconds, r.Long, r.LongerThanInt)).ToArray());
+        }
+
         /// <summary>Runs ExecuteUpdate in a transaction that is rolled back, and checks each updated row.</summary>
         private async Task AssertExecuteUpdate(
             Expression<Func<DurationStorageTypes, bool>> filter,
@@ -421,6 +532,9 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
             foreach (var (row, updatedRow) in before.Zip(after))
                 assertRow(row, updatedRow);
         }
+
+        /// <summary>What a time or datetime2 keeps: whole ticks (100ns), truncated toward zero.</summary>
+        private static Duration Ticks(Duration duration) => Duration.FromTicks(duration.BclCompatibleTicks);
 
         private static Duration WholeSeconds(Duration duration)
             => Duration.FromSeconds(duration.ToInt64Nanoseconds() / NodaConstants.NanosecondsPerSecond);

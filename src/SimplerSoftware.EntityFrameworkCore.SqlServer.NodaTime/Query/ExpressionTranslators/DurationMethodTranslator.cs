@@ -232,26 +232,25 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
                 return _durations.Plus(arguments[0], arguments[1], _nanosecondsPerDatePart[plusPart]) ?? base.Translate(instance, method, arguments, logger);
 
             // Microseconds()
-            if (_methodInfoDatePartExtensionMapping.ContainsKey(method) && IsStoredAsNumber(arguments[0]))
+            if (_methodInfoDatePartExtensionMapping.ContainsKey(method) && DurationSqlTranslator.HasArithmeticComponents(DurationSqlTranslator.StorageOf(arguments[0])))
                 return _durations.Component(arguments[0], 1000, 1_000_000, method.ReturnType);
 
             if (_methodInfoDateDiffMapping.TryGetValue(method, out var datePart) || _methodInfoDateDiffBigMapping.TryGetValue(method, out datePart))
             {
-                // Two time values keep SQL Server's DATEDIFF (a parameter or constant is treated as a time, as before);
-                // anything else is counted in nanoseconds the same way. A parameter or constant is then sent as
-                // nanoseconds, so it keeps any fraction of a second even next to an int column.
+                // Time and datetime2 values keep SQL Server's DATEDIFF, which takes them together since it puts a time on
+                // 1900-01-01 (a parameter or constant takes the other side's storage, as before). Anything else is counted
+                // in nanoseconds the same way; a parameter or constant is then sent as nanoseconds, so it keeps any
+                // fraction of a second even next to an int column.
                 var storages = new[] { arguments[1], arguments[2] }
                     .Where(a => a.TypeMapping != null)
                     .Select(DurationSqlTranslator.StorageOf)
                     .ToList();
-                if (storages.Any(s => s != DurationStorage.Time) && !storages.Contains(DurationStorage.Other))
+                if (storages.Any(s => s is not (DurationStorage.Time or DurationStorage.DateTime2)) && !storages.Contains(DurationStorage.Other))
                     return _durations.DateDiff(arguments[1], arguments[2], _nanosecondsPerDatePart[datePart], method.ReturnType);
             }
 
             return base.Translate(instance, method, arguments, logger);
         }
 
-        private static bool IsStoredAsNumber(SqlExpression duration)
-            => DurationSqlTranslator.StorageOf(duration) is DurationStorage.Nanoseconds or DurationStorage.Seconds;
     }
 }
