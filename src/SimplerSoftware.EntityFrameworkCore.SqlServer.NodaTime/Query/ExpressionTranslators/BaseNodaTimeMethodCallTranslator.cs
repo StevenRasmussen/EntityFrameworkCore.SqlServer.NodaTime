@@ -45,7 +45,7 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
             _methodInfoDateDiffBigMapping = methodInfoDateDiffBigMapping;
         }
 
-        public SqlExpression Translate(SqlExpression instance, MethodInfo method, IReadOnlyList<SqlExpression> arguments, IDiagnosticsLogger<DbLoggerCategory.Query> logger)
+        public virtual SqlExpression Translate(SqlExpression instance, MethodInfo method, IReadOnlyList<SqlExpression> arguments, IDiagnosticsLogger<DbLoggerCategory.Query> logger)
         {
             if (_methodInfoDateAddMapping != null && _methodInfoDateAddMapping.TryGetValue(method, out var dateAddPart))
             {

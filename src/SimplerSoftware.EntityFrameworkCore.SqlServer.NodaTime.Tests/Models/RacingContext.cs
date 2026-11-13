@@ -30,6 +30,8 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
 
         public DbSet<NodaTimeCollections> NodaTimeCollections { get; set; }
 
+        public DbSet<DurationStorageTypes> DurationStorageTypes { get; set; }
+
         public string Sql => _loggerFactory.Logger.Sql;
 
         protected override void OnConfiguring(DbContextOptionsBuilder options) => options.UseLoggerFactory(_loggerFactory);
@@ -69,6 +71,13 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
                 entity.HasData(
                     CreatePrecisionNodaTypes(1, new LocalDateTime(2019, 1, 1, 8, 0)),
                     CreatePrecisionNodaTypes(2, new LocalDateTime(2019, 7, 1, 14, 30)));
+            });
+
+            modelBuilder.Entity<DurationStorageTypes>(entity =>
+            {
+                entity.Property(x => x.BigInt).HasColumnType("bigint");
+                entity.Property(x => x.Int).HasColumnType("int");
+                entity.HasData(DurationStorageRows);
             });
 
             modelBuilder.Entity<Race>()
@@ -116,6 +125,28 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
                     new RaceSplit { Id = 9, TimeStampInstant = InstantExtensions.FromParts(2020, 1, 1, 9, 9, 9, 9, 9, 9), TimeStampLocalDateTime = LocalDateTimeExtensions.FromParts(2020, 1, 1, 9, 9, 9, 9, 9, 9), TimeStampLocalTime = LocalTimeExtensions.FromParts(9, 9, 9, 9, 9, 900), TimeStampOffsetDateTime = OffsetDateTimeExtensions.FromParts(2020, 1, 1, 9, 9, 9, 9, 9, 900, 300) }
                 );
         }
+
+        private static readonly Duration WithNanoseconds = Duration.FromHours(1) + Duration.FromMinutes(30) + Duration.FromSeconds(15) + Duration.FromNanoseconds(123_456_789);
+        private static readonly Duration NegativeWithFraction = -(Duration.FromHours(26) + Duration.FromMinutes(3) + Duration.FromMilliseconds(500));
+
+        /// <summary>
+        /// Values as written; what comes back is truncated to 100ns for time and to whole seconds for int, which is
+        /// why the tests compare query results with .NET's answer for the values read back.
+        /// </summary>
+        public static readonly DurationStorageTypes[] DurationStorageRows =
+        [
+            new() { Id = 1, Time = Duration.Zero, BigInt = Duration.Zero, Int = Duration.Zero },
+            new() { Id = 2, Time = Duration.FromHours(1), BigInt = Duration.FromHours(1), Int = Duration.FromHours(1) },
+            new() { Id = 3, Time = WithNanoseconds, BigInt = WithNanoseconds, Int = WithNanoseconds },
+            new() { Id = 4, Time = Duration.FromDays(1) - Duration.FromNanoseconds(100), BigInt = Duration.FromDays(1) - Duration.Epsilon, Int = Duration.FromDays(1) - Duration.Epsilon },
+            new() { Id = 5 },
+            new() { Id = 6, Time = Duration.FromHours(12), BigInt = Duration.FromHours(25), Int = Duration.FromHours(25) },
+            new() { Id = 7, BigInt = NegativeWithFraction, Int = NegativeWithFraction },
+            new() { Id = 8, Time = Duration.FromHours(23), BigInt = Duration.FromDays(100) + Duration.Epsilon, Int = Duration.FromDays(100) },
+            new() { Id = 9, BigInt = -Duration.FromMilliseconds(1500), Int = -Duration.FromMilliseconds(1500) },
+            new() { Id = 10, Time = Duration.FromHours(6), BigInt = Duration.FromDays(100 * 365) },
+            new() { Id = 11, Time = Duration.FromMinutes(30), BigInt = -Duration.FromMinutes(30), Int = Duration.FromMinutes(30) },
+        ];
 
         /// <summary>Row 1 has every nullable property populated; row 2 has every nullable property null.</summary>
         private static SupportedNodaTypes CreateSupportedNodaTypes(int id, bool withNullables) => new SupportedNodaTypes

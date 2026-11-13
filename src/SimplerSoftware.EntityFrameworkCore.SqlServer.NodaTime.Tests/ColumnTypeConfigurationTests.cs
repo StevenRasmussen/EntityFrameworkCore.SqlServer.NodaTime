@@ -59,8 +59,8 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         /// the column was created with the configured type.
         /// </summary>
         [Theory]
-        [InlineData(nameof(Entity.Duration), "bigint")]
-        [InlineData(nameof(Entity.Duration), "int")]
+        [InlineData(nameof(Entity.Duration), "smallint")]
+        [InlineData(nameof(Entity.Duration), "decimal(20, 0)")]
         [InlineData(nameof(Entity.Duration), "nvarchar(40)")]
         [InlineData(nameof(Entity.Duration), "datetime2")]
         [InlineData(nameof(Entity.Instant), "nvarchar(40)")]

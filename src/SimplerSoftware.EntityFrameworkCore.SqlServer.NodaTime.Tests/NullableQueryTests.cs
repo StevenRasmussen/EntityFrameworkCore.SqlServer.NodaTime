@@ -45,7 +45,7 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         {
             var count = await this.Db.TypeResults.CountAsync(t => t.DurationNull.Value.PlusHours(1) == Duration.FromMinutes(150));
 
-            Assert.Equal(condense($"{CountStatement} WHERE DATEADD(hour, CAST(1.0E0 AS int), [t].[DurationNull]) = '02:30:00'"), condense(this.Db.Sql));
+            Assert.Equal(condense($"{CountStatement} WHERE DATEDIFF_BIG(nanosecond, '19000101', [t].[DurationNull]) + CAST(1.0E0 * 3600000000000.0E0 AS bigint) = CAST(9000000000000 AS bigint)"), condense(this.Db.Sql));
             Assert.Equal(1, count);
         }
 
