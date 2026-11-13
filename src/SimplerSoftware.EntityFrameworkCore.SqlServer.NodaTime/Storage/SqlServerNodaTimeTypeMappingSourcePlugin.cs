@@ -31,15 +31,6 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
         private readonly DurationStringTypeMapping _durationNCharTypeMapping = new DurationStringTypeMapping("nchar", unicode: true, fixedLength: true);
         private readonly DurationStringTypeMapping _durationCharTypeMapping = new DurationStringTypeMapping("char", unicode: false, fixedLength: true);
 
-        private readonly static List<Type> _hasPrecisionTypes = new List<Type>
-        {
-            typeof(Instant),
-            typeof(OffsetDateTime),
-            typeof(LocalDateTime),
-            typeof(LocalTime),
-            typeof(Duration),
-        };
-
         // SQL Server's built-in type names (and their ISO synonyms). A NodaTime property configured with one of these
         // that we don't map it to (e.g. bigint on a Duration) is a misconfiguration. Any other name may be a
         // user-defined alias type (CREATE TYPE ... FROM date), which keeps the default mapping as it always has.
@@ -139,9 +130,10 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
             if (clrType == null || !ClrTypeMappings.TryGetValue(clrType, out var mapping))
                 return null;
 
-            // TODO: Cache size/precision/scale mappings?
-            return mappingInfo.Precision.HasValue && _hasPrecisionTypes.Contains(mapping.ClrType)
-                ? mapping.Clone(mappingInfo)
+            // The default type with the precision: HasPrecision(3) alone gives datetime2(3). With an alias type name, this
+            // keeps the default type too: "dbo.UtcTimestamp(3)" wouldn't be valid SQL where the name is used, as in OPENJSON.
+            return mappingInfo.Precision.HasValue && mapping.StoreTypePostfix == StoreTypePostfix.Precision
+                ? mapping.WithPrecisionAndScale(mappingInfo.Precision, mappingInfo.Scale)
                 : mapping;
         }
 

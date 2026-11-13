@@ -46,9 +46,6 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
     /// </summary>
     internal sealed class DurationSqlTranslator
     {
-        private static readonly bool[] _dateDiffPropagatesNullability = { false, false, true };
-        private static readonly bool[] _dateAddPropagatesNullability = { false, true, true };
-        private static readonly bool[] _datePartPropagatesNullability = { false, true };
 
         private readonly ISqlExpressionFactory _sqlExpressionFactory;
         private readonly RelationalTypeMapping _longTypeMapping;
@@ -126,7 +123,7 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
                             duration,
                         },
                         nullable: true,
-                        argumentsPropagateNullability: _dateDiffPropagatesNullability,
+                        argumentsPropagateNullability: SqlServerFunctionNullability.DateDiffFrom1900,
                         typeof(Duration),
                         DurationBigIntTypeMapping.Default);
 
@@ -196,7 +193,7 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
                 "DATEDIFF_BIG",
                 new SqlExpression[] { new SqlFragmentExpression("microsecond"), new SqlFragmentExpression("'19000101'"), dateTime2 },
                 nullable: true,
-                argumentsPropagateNullability: _dateDiffPropagatesNullability,
+                argumentsPropagateNullability: SqlServerFunctionNullability.DateDiffFrom1900,
                 typeof(long),
                 _longTypeMapping);
 
@@ -204,7 +201,7 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
                 "DATEPART",
                 new SqlExpression[] { new SqlFragmentExpression("nanosecond"), dateTime2 },
                 nullable: true,
-                argumentsPropagateNullability: _datePartPropagatesNullability,
+                argumentsPropagateNullability: SqlServerFunctionNullability.DatePart,
                 typeof(int),
                 _intTypeMapping);
 
@@ -422,7 +419,7 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
                             new SqlFragmentExpression("CAST('00:00:00' AS time)"),
                         },
                         nullable: true,
-                        argumentsPropagateNullability: _dateAddPropagatesNullability,
+                        argumentsPropagateNullability: SqlServerFunctionNullability.DateAddOrDiff,
                         typeof(Duration),
                         columnTypeMapping);
 
@@ -435,7 +432,7 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
                             time,
                         },
                         nullable: true,
-                        argumentsPropagateNullability: _dateAddPropagatesNullability,
+                        argumentsPropagateNullability: SqlServerFunctionNullability.DateAddOrDiff,
                         typeof(Duration),
                         columnTypeMapping);
             }
@@ -535,7 +532,7 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
                     "DATEADD",
                     new SqlExpression[] { new SqlFragmentExpression("second"), duration, new SqlFragmentExpression("CAST('19000101' AS datetime2)") },
                     nullable: true,
-                    argumentsPropagateNullability: _dateAddPropagatesNullability,
+                    argumentsPropagateNullability: SqlServerFunctionNullability.DateAddOrDiff,
                     typeof(Duration),
                     typeMapping);
 
@@ -570,7 +567,7 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
                     "DATEADD",
                     new[] { new SqlFragmentExpression(datePart), number, date },
                     nullable: true,
-                    argumentsPropagateNullability: _dateAddPropagatesNullability,
+                    argumentsPropagateNullability: SqlServerFunctionNullability.DateAddOrDiff,
                     typeof(Duration),
                     typeMapping);
 

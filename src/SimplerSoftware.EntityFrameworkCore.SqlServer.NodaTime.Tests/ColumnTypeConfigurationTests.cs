@@ -92,6 +92,16 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
             Assert.Equal(expectedStoreType, mapping.StoreType);
         }
 
+        /// <summary>
+        /// With HasPrecision, an alias type gets the default type with that precision. Putting the precision on the alias
+        /// name, as in "dbo.UtcTimestamp(3)", isn't valid SQL, and SQL Server only uses this name in queries (CAST, OPENJSON).
+        /// </summary>
+        [Fact]
+        public void Alias_type_with_precision_keeps_the_default_type()
+        {
+            Assert.Equal("datetime2(3)", MappingOf(nameof(Entity.Instant), "dbo.UtcTimestamp", precision: 3).StoreType);
+        }
+
         [Theory]
         [InlineData(nameof(Entity.Instant), "DATETIME2", "datetime2")]
         [InlineData(nameof(Entity.Instant), "DateTime", "datetime")]

@@ -33,7 +33,6 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
                 { nameof(Duration.SubsecondNanoseconds), (1, NodaConstants.NanosecondsPerSecond) },
             };
 
-        private static readonly bool[] _dateDiffPropagatesNullability = { false, false, true };
 
         private readonly ISqlExpressionFactory _sqlExpressionFactory;
         private readonly DurationSqlTranslator _durations;
@@ -73,7 +72,7 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
                     "DATEDIFF",
                     new SqlExpression[] { new SqlFragmentExpression("day"), new SqlFragmentExpression("'19000101'"), instance },
                     nullable: true,
-                    argumentsPropagateNullability: _dateDiffPropagatesNullability,
+                    argumentsPropagateNullability: SqlServerFunctionNullability.DateDiffFrom1900,
                     returnType);
             }
 
