@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Query;
 using NodaTime;
 using System;
 using System.Collections.Generic;
@@ -21,6 +22,9 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
     /// Durations are wrapped in one, and so are the values ExecuteUpdate writes into Duration columns.</item>
     /// <item>A ZonedDateTime's parts become parts of the OffsetDateTime it is mapped as (#22), and comparing an
     /// OffsetDateTime's instant with an Instant becomes a call to <see cref="InstantComparisons"/>.</item>
+    /// <item>Code that uses a Period, which is mapped as a complex type, becomes code that uses its units (#3):
+    /// period.HasTimeComponent is a test of them, and date + period, period.ToDuration() and a single unit of
+    /// Period.Between become calls to <see cref="PeriodStandIns"/>, which take them.</item>
     /// </list>
     /// </summary>
     internal sealed class NodaTimeQueryExpressionInterceptor : IQueryExpressionInterceptor
@@ -56,6 +60,14 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
 
                 if (node.Method?.DeclaringType == typeof(Duration))
                     return RewriteDurationOperator(node) ?? base.VisitBinary(node);
+
+                // value + period, value - period (#3).
+                if ((node.NodeType == ExpressionType.Add || node.NodeType == ExpressionType.Subtract)
+                    && node.Right.Type == typeof(Period) && node.Type == node.Left.Type
+                    && PeriodStandIns.PlusMethod(node.Left.Type) != null)
+                {
+                    return PlusPeriod(Visit(node.Left), Visit(node.Right), negate: node.NodeType == ExpressionType.Subtract);
+                }
 
                 if (node.Method?.DeclaringType == typeof(Instant) && node.Type == typeof(bool))
                 {
@@ -118,8 +130,48 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
                         return Expression.Property(OffsetDateTimeOf(Visit(node.Expression)), offsetDateTimeMember);
                 }
 
+                if (node.Expression?.Type == typeof(Period))
+                {
+                    switch (node.Member.Name)
+                    {
+                        // Whether any of its years, months, weeks or days, or any of its time units, isn't zero.
+                        case nameof(Period.HasDateComponent):
+                            return Expression.Call(PeriodStandIns.HasDateComponentMethod, PeriodUnitsOf(Visit(node.Expression), negate: false).Take(4));
+                        case nameof(Period.HasTimeComponent):
+                            return Expression.Call(PeriodStandIns.HasTimeComponentMethod, PeriodUnitsOf(Visit(node.Expression), negate: false).Skip(4));
+                    }
+
+                    // Period.Between(start, end, PeriodUnits.Years).Years: only years, so it's a number of years.
+                    if (PeriodStandIns.UnitOf(node.Member.Name) is { } unit
+                        && StripConvert(node.Expression) is MethodCallExpression { Method.Name: nameof(Period.Between), Arguments: [var start, var end, ConstantExpression { Value: PeriodUnits units }] } between
+                        && between.Method.DeclaringType == typeof(Period)
+                        && units == unit
+                        && PeriodStandIns.UnitsBetweenMethod(start.Type, node.Type) is { } unitsBetween)
+                    {
+                        return Expression.Call(unitsBetween, Visit(start), Visit(end), Expression.Constant(unit));
+                    }
+                }
+
                 return base.VisitMember(node);
             }
+
+            private static System.Reflection.PropertyInfo[] PeriodUnitProperties => SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Metadata.PeriodConvention.Units;
+
+            /// <summary>
+            /// value + period in terms of the period's units. Not a parameter or constant, though: EF Core extracts those
+            /// before this runs, and can't read units off them in SQL. They're passed whole, to be sent as JSON.
+            /// </summary>
+            private static Expression PlusPeriod(Expression value, Expression period, bool negate)
+                => StripConvert(period) is QueryParameterExpression or ConstantExpression
+                    ? Expression.Call(PeriodStandIns.PlusPeriodMethod(value.Type), value, period, Expression.Constant(negate))
+                    : Expression.Call(PeriodStandIns.PlusMethod(value.Type), new[] { value }.Concat(PeriodUnitsOf(period, negate)));
+
+            private static System.Collections.Generic.IEnumerable<Expression> PeriodUnitsOf(Expression period, bool negate)
+                => PeriodUnitProperties.Select(unit =>
+                {
+                    Expression value = Expression.Property(period, unit);
+                    return negate ? Expression.Negate(value) : value;
+                });
 
             /// <summary>
             /// Whether a ZonedDateTime is a property the model maps as a complex property, with columns, perhaps through
@@ -146,6 +198,30 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
             private bool IsMappedProperty(Type type, string name)
                 => _zonedDateTimeProperties == null
                     || _zonedDateTimeProperties.Any(p => p.Name == name && p.DeclaringType.IsAssignableFrom(type));
+
+            private Expression RewritePeriodArithmetic(MethodCallExpression node)
+            {
+                Expression value, period;
+                bool negate;
+                if (node.Object != null && node.Arguments.Count == 1 && node.Arguments[0].Type == typeof(Period)
+                    && node.Method.Name is "Plus" or "Minus")
+                {
+                    (value, period, negate) = (node.Object, node.Arguments[0], node.Method.Name == "Minus");
+                }
+                else if (node.Object == null && node.Arguments.Count == 2 && node.Arguments[1].Type == typeof(Period)
+                    && node.Method.DeclaringType == node.Arguments[0].Type && node.Method.Name is "Add" or "Subtract")
+                {
+                    (value, period, negate) = (node.Arguments[0], node.Arguments[1], node.Method.Name == "Subtract");
+                }
+                else
+                {
+                    return null;
+                }
+
+                return node.Type == value.Type && PeriodStandIns.PlusMethod(value.Type) != null
+                    ? PlusPeriod(Visit(value), Visit(period), negate)
+                    : null;
+            }
 
             /// <summary>
             /// offsetDateTime.ToInstant() OP instant, either way round: the stand-in compares the datetimeoffset itself,
@@ -187,6 +263,14 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
 
             protected override Expression VisitMethodCall(MethodCallExpression node)
             {
+                // value.Plus(period), value.Minus(period), LocalDateTime.Add(value, period), LocalDateTime.Subtract(value, period) (#3).
+                if (RewritePeriodArithmetic(node) is { } periodArithmetic)
+                    return periodArithmetic;
+
+                // period.ToDuration() (#3).
+                if (node.Object?.Type == typeof(Period) && node.Method.Name == nameof(Period.ToDuration) && node.Arguments.Count == 0)
+                    return Expression.Call(PeriodStandIns.ToDurationMethod, PeriodUnitsOf(Visit(node.Object), negate: false));
+
                 if (node.Object?.Type == typeof(ZonedDateTime) && node.Arguments.Count == 0 && IsMapped(node.Object))
                 {
                     switch (node.Method.Name)

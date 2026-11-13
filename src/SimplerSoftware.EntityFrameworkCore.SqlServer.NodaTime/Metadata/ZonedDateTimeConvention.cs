@@ -2,11 +2,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Metadata.Conventions;
-using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
 using NodaTime;
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
 
 namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Metadata
@@ -14,11 +11,18 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Metadata
     /// <summary>
     /// Maps every <see cref="ZonedDateTime"/> property, on an entity type or a complex type, as a complex type over the two
     /// fields a ZonedDateTime is made of (#22): its OffsetDateTime, in a datetimeoffset column named after the property
-    /// ("Start"), and its zone, in a column for the zone ID ("Start_Zone"). Explicit configuration of the property, such as
-    /// the application's own value converter, or ignoring it, takes precedence as usual.
+    /// ("Start"), and its zone, in a column for the zone ID ("Start_Zone"). The application's own mapping takes precedence:
+    /// a property ignored, or given a value converter, whether by itself or for every ZonedDateTime in ConfigureConventions.
     /// </summary>
     internal sealed class ZonedDateTimeConvention : IEntityTypeAddedConvention, IComplexPropertyAddedConvention, IModelFinalizingConvention
     {
+        private readonly IMemberClassifier _memberClassifier;
+
+        public ZonedDateTimeConvention(IMemberClassifier memberClassifier)
+        {
+            _memberClassifier = memberClassifier;
+        }
+
         /// <summary>The name of the property mapped to a ZonedDateTime's OffsetDateTime; queries use it with EF.Property.</summary>
         internal const string OffsetDateTimePropertyName = "offsetDateTime";
 
@@ -40,14 +44,18 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Metadata
                 AddZonedDateTimeProperties(complexType.Builder);
         }
 
-        private static void AddZonedDateTimeProperties(IConventionTypeBaseBuilder typeBuilder)
+        private void AddZonedDateTimeProperties(IConventionTypeBaseBuilder typeBuilder)
         {
             var type = typeBuilder.Metadata;
-            foreach (var property in PublicProperties(type.ClrType))
+
+            // IgnoreAny<ZonedDateTime>() in ConfigureConventions.
+            if (type.Model.IsIgnoredType(typeof(ZonedDateTime)))
+                return;
+
+            foreach (var property in NodaTimeComplexTypes.PublicProperties(type.ClrType))
             {
                 if ((property.PropertyType != typeof(ZonedDateTime) && property.PropertyType != typeof(ZonedDateTime?))
-                    || !property.CanRead || !property.CanWrite
-                    || type.IsIgnored(property.Name))
+                    || NodaTimeComplexTypes.IsMappedByApplication(type, property, _memberClassifier))
                 {
                     continue;
                 }
@@ -60,7 +68,7 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Metadata
                         + "for example with a value converter, or ignore it.");
                 }
 
-                // Null when the property has been configured otherwise, e.g. ignored or given a value converter.
+                // Null when the property has been configured otherwise, at a higher level than a convention.
                 var complexProperty = typeBuilder.ComplexProperty(property);
                 if (complexProperty == null)
                     continue;
@@ -75,30 +83,13 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Metadata
         }
 
         /// <summary>
-        /// The type's public instance properties, including inherited ones (from a base class that isn't an entity type, the
-        /// derived type has them, as it does its other properties). One per name, the most derived, for one hidden with "new".
-        /// </summary>
-        private static IEnumerable<PropertyInfo> PublicProperties(Type clrType)
-        {
-            var names = new HashSet<string>();
-            for (var current = clrType; current != null && current != typeof(object); current = current.BaseType)
-            {
-                foreach (var property in current.GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
-                {
-                    // Not an indexer, which EF Core doesn't map as a property either.
-                    if (property.GetIndexParameters().Length == 0 && names.Add(property.Name))
-                        yield return property;
-                }
-            }
-        }
-
-        /// <summary>
         /// Names the OffsetDateTime's column after the ZonedDateTime property ("Start" rather than "Start_offsetDateTime"),
         /// or in a JSON column, its JSON property "OffsetDateTime", beside "Zone". Done last, because only then is it known
         /// whether the property is in a JSON column.
         /// </summary>
         public void ProcessModelFinalizing(IConventionModelBuilder modelBuilder, IConventionContext<IConventionModelBuilder> context)
         {
+            NodaTimeComplexTypes.ThrowIfOnOwnedType(modelBuilder.Metadata, typeof(ZonedDateTime));
             foreach (var entityType in modelBuilder.Metadata.GetEntityTypes())
                 NameColumns(entityType);
         }
@@ -113,47 +104,8 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Metadata
                 else if (complexType.IsMappedToJson())
                     complexType.FindProperty(OffsetDateTimePropertyName)?.Builder.HasJsonPropertyName(nameof(OffsetDateTime));
                 else if (complexType.FindProperty(OffsetDateTimePropertyName) is { } offsetDateTime)
-                    offsetDateTime.Builder.HasColumnName(ColumnName(offsetDateTime, complexProperty));
+                    offsetDateTime.Builder.HasColumnName(NodaTimeComplexTypes.ColumnName(offsetDateTime, complexProperty));
             }
-        }
-
-        /// <summary>
-        /// The name EF Core would give the column, without the "_offsetDateTime" at the end: "Start", "Schedule_Start", or
-        /// for an owned type in its owner's table, "Booking_Start". So it's the Zone column's name without "_Zone".
-        /// </summary>
-        private static string ColumnName(IConventionProperty offsetDateTime, IReadOnlyComplexProperty complexProperty)
-        {
-            const string suffix = "_" + OffsetDateTimePropertyName;
-            var storeObject = StoreObjectIdentifier.Create(offsetDateTime.DeclaringType, StoreObjectType.Table)
-                ?? StoreObjectIdentifier.Create(offsetDateTime.DeclaringType, StoreObjectType.View);
-            var defaultName = storeObject is { } table ? offsetDateTime.GetDefaultColumnName(table) : offsetDateTime.GetDefaultColumnName();
-
-            // Not when EF Core has shortened a long name to fit.
-            return defaultName != null && defaultName.EndsWith(suffix, StringComparison.Ordinal)
-                ? defaultName[..^suffix.Length]
-                : ColumnPrefix(complexProperty);
-        }
-
-        /// <summary>The column-name prefix EF Core uses for a complex property's columns: "Start", or "Schedule_Start".</summary>
-        private static string ColumnPrefix(IReadOnlyComplexProperty complexProperty)
-        {
-            var names = new List<string>();
-            for (var current = complexProperty; current != null; current = (current.DeclaringType as IReadOnlyComplexType)?.ComplexProperty)
-                names.Insert(0, current.Name);
-            return string.Join("_", names);
-        }
-    }
-
-    internal sealed class NodaTimeConventionSetPlugin : IConventionSetPlugin
-    {
-        public ConventionSet ModifyConventions(ConventionSet conventionSet)
-        {
-            var convention = new ZonedDateTimeConvention();
-            conventionSet.EntityTypeAddedConventions.Add(convention);
-            conventionSet.ComplexPropertyAddedConventions.Add(convention);
-            // First, so that EF Core's own finalizing conventions (such as making column names unique) see the names.
-            conventionSet.ModelFinalizingConventions.Insert(0, convention);
-            return conventionSet;
         }
     }
 }

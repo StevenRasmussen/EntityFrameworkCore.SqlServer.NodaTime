@@ -58,5 +58,8 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
         public ZonedDateTime When { get; set; }
 
         public ZonedDateTime? MaybeWhen { get; set; }
+
+        /// <summary>A JSON object with its units, inside this JSON column (#3).</summary>
+        public Period Every { get; set; }
     }
 }

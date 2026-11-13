@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore.Migrations.Design;
 using Microsoft.EntityFrameworkCore.SqlServer.Infrastructure;
 using Microsoft.EntityFrameworkCore.SqlServer.Storage;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Microsoft.Extensions.DependencyInjection;
 using NodaTime;
 using NodaTime.Text;
@@ -36,10 +37,13 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
             public ZonedDateTime When { get; set; }
         }
 
-        private sealed class AppointmentContext(Action<ModelBuilder> configure) : DbContext
+        private sealed class AppointmentContext(Action<ModelBuilder> configure, Action<ModelConfigurationBuilder> conventions = null) : DbContext
         {
             protected override void OnConfiguring(DbContextOptionsBuilder options)
                 => options.UseSqlServer("Server=offline;Database=Offline", x => x.UseNodaTime()).EnableServiceProviderCaching(false);
+
+            protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+                => conventions?.Invoke(configurationBuilder);
 
             protected override void OnModelCreating(ModelBuilder modelBuilder)
             {
@@ -270,11 +274,14 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
             public ZonedDateTime Start { get; set; }
         }
 
-        /// <summary>In an owned type, the columns are named as EF Core names the owned type's other columns.</summary>
+        /// <summary>
+        /// EF Core can't query a complex property of an owned type, whatever its table: every query of the owner would
+        /// fail inside EF Core. So the model fails to build, saying what to do instead.
+        /// </summary>
         [Theory]
-        [InlineData(false, "[Booking_Start] datetimeoffset", "[Booking_Start_Zone] nvarchar(50)")]
-        [InlineData(true, "[Start] datetimeoffset", "[Start_Zone] nvarchar(50)")]
-        public void Owned_type(bool ownTable, string expectedColumn, string expectedZoneColumn)
+        [InlineData(false)]
+        [InlineData(true)]
+        public void Owned_type(bool ownTable)
         {
             using var db = new AppointmentContext(b => b.Entity<Lesson>().OwnsOne(x => x.Booking, o =>
             {
@@ -282,10 +289,18 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
                     o.ToTable("Bookings");
             }));
 
-            var script = db.Database.GenerateCreateScript();
+            var exception = Assert.Throws<InvalidOperationException>(() => db.Model);
 
-            Assert.Contains(expectedColumn, script);
-            Assert.Contains(expectedZoneColumn, script);
+            Assert.Contains("'Booking.Start' is a ZonedDateTime on the owned entity type 'Booking'", exception.Message);
+        }
+
+        [Fact]
+        public void Owned_type_with_its_own_converter()
+        {
+            var pattern = ZonedDateTimePattern.CreateWithInvariantCulture("uuuu'-'MM'-'dd'T'HH':'mm':'ss;FFFFFFFFFo<G> z", DateTimeZoneProviders.Tzdb);
+            using var db = new AppointmentContext(b => b.Entity<Lesson>().OwnsOne(x => x.Booking, o => o.Property(x => x.Start).HasConversion(z => pattern.Format(z), s => pattern.Parse(s).Value)));
+
+            Assert.Contains("[Booking_Start] nvarchar(max) NULL", db.Database.GenerateCreateScript());
         }
 
         /// <summary>The zone column's type from HasMaxLength, IsUnicode and IsFixedLength, as for a string.</summary>
@@ -323,6 +338,80 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
             using var db = new AppointmentContext(b => b.Entity<Calendar>());
 
             Assert.DoesNotContain("Item", db.Database.GenerateCreateScript());
+        }
+
+        public class ZonedDateTimeAsText() : ValueConverter<ZonedDateTime, string>(z => ToText(z), s => FromText(s))
+        {
+            private static readonly ZonedDateTimePattern _pattern
+                = ZonedDateTimePattern.CreateWithInvariantCulture("uuuu'-'MM'-'dd'T'HH':'mm':'ss;FFFFFFFFFo<G> z", DateTimeZoneProviders.Tzdb);
+
+            private static string ToText(ZonedDateTime value) => _pattern.Format(value);
+
+            private static ZonedDateTime FromText(string text) => _pattern.Parse(text).Value;
+        }
+
+        public class Meeting
+        {
+            public int Id { get; set; }
+
+            public ZonedDateTime? Maybe { get; set; }
+
+            public Slot Slot { get; set; }
+        }
+
+        public class Slot
+        {
+            public string Room { get; set; }
+
+            public ZonedDateTime At { get; set; }
+        }
+
+        private static AppointmentContext MeetingContext(Action<ModelConfigurationBuilder> conventions)
+            => new(b => b.Entity<Meeting>().ComplexProperty(x => x.Slot).IsRequired(), conventions);
+
+        private static bool HasZonedDateTimeMapping(DbContext db)
+            => db.Model.GetEntityTypes().Any(e => e.GetComplexProperties().Any(p => p.ComplexType.ClrType == typeof(ZonedDateTime)
+                || p.ComplexType.GetComplexProperties().Any(n => n.ComplexType.ClrType == typeof(ZonedDateTime))));
+
+        /// <summary>
+        /// The same for every ZonedDateTime, with a value converter in ConfigureConventions: a common way to store them
+        /// before this library mapped them. Nullable ones, and ones inside a complex type, too.
+        /// </summary>
+        [Fact]
+        public void Own_converter_in_ConfigureConventions_takes_precedence()
+        {
+            using var db = MeetingContext(c => c.Properties<ZonedDateTime>().HaveConversion<ZonedDateTimeAsText>());
+
+            var script = db.Database.GenerateCreateScript();
+
+            Assert.Contains("[When] nvarchar(max) NOT NULL", script);
+            Assert.Contains("[Maybe] nvarchar(max) NULL", script);
+            Assert.Contains("[Slot_At] nvarchar(max) NOT NULL", script);
+            Assert.DoesNotContain("_Zone", script);
+            Assert.False(HasZonedDateTimeMapping(db));
+            Assert.Contains("SELECT [a].[When]", db.Set<Appointment>().Select(x => x.When.ToInstant()).ToQueryString());
+        }
+
+        [Fact]
+        public void IgnoreAny_in_ConfigureConventions_ignores_it()
+        {
+            using var db = MeetingContext(c => c.IgnoreAny<ZonedDateTime>());
+
+            var script = db.Database.GenerateCreateScript();
+
+            Assert.DoesNotContain("When", script);
+            Assert.DoesNotContain("Maybe", script);
+            Assert.DoesNotContain("Slot_At", script);
+            Assert.Contains("[Slot_Room]", script);
+            Assert.False(HasZonedDateTimeMapping(db));
+        }
+
+        [Fact]
+        public void IgnoreAny_nullable_in_ConfigureConventions_ignores_nullable_ones()
+        {
+            using var db = MeetingContext(c => c.IgnoreAny<ZonedDateTime?>());
+
+            Assert.DoesNotContain("Maybe", db.Database.GenerateCreateScript());
         }
 
         [Fact]
