@@ -106,7 +106,34 @@ Things to know:
 - **Seeding:** `HasData` can't seed a `ZonedDateTime`, since EF Core can't seed complex types.
 - **Methods in a projection:** EF Core can't run a method on a `ZonedDateTime` (or any struct complex type) at the end of a query, such as `Select(x => x.Start.WithZone(zone))`. Select the `ZonedDateTime` and call the method afterwards.
 - **A default `ZonedDateTime`** (0001-01-01, with no zone set) is saved and read back as UTC, the zone NodaTime gives it.
+- **Owned types:** EF Core can't query a complex type on an owned entity type, so a `ZonedDateTime` there fails when the model is built, with a message saying what to do: make the owned type a complex type instead (`ComplexProperty` rather than `OwnsOne`), or map the property yourself.
 - **How it's mapped:** through `ZonedDateTime`'s two private fields, its `OffsetDateTime` and its zone. A property you've already mapped yourself keeps your mapping: one with a value converter, on the property or for every `ZonedDateTime` with `Properties<ZonedDateTime>().HaveConversion(...)` in `ConfigureConventions`, or one ignored, including with `IgnoreAny<ZonedDateTime>()`.
+
+## Period
+
+A `Period` property needs no configuration. NodaTime keeps each of a period's units as it is, so `PT90M` isn't the same period as `PT1H30M`, and `P1D` isn't `PT24H`. So the column keeps all ten of them, signs included, as JSON:
+
+```json
+{"Years":0,"Months":0,"Weeks":0,"Days":1,"Hours":-1,"Minutes":90,"Seconds":0,"Milliseconds":0,"Ticks":0,"Nanoseconds":0}
+```
+
+The column is named after the property and is `nvarchar(max)`. A `Period` inside a JSON column already is an object there. A `Period` inside a complex type of your own that's stored in the table's columns gets a column for each unit (`Rule_Every_Years` and so on) instead, as EF Core can't put a JSON column there.
+
+Queries can use:
+
+- `==`, `!=` and `== null`, which compare unit by unit, as NodaTime does;
+- each unit (`Years`, `Months`, ... `Nanoseconds`), and `HasDateComponent` and `HasTimeComponent`;
+- adding a period to a `LocalDateTime`, `LocalDate` or `LocalTime`: `+`, `-`, `Plus`, `Minus`, `Add` and `Subtract`, whether the period is a column, a parameter or a constant. Like NodaTime, this adds the years, then the months (from the 31st, a shorter month ends on its last day), then the weeks and days, then the time. A `LocalTime` wraps around midnight;
+- `ToDuration()`, counting a week as 7 days and a day as 24 hours;
+- one unit between two values, such as an age: `Period.Between(x.BirthDate, today, PeriodUnits.Years).Years`, for any single unit, for `LocalDate`, `LocalDateTime` and `LocalTime` values; and `Period.DaysBetween`.
+
+A null period gives NULL, as a null value does elsewhere in a query, and has no date or time units: its `HasDateComponent` and `HasTimeComponent` are false. Where NodaTime throws for a period, so does the query, rather than give another answer. That covers adding time units to a `LocalDate`, adding date units to a `LocalTime`, and `ToDuration()` with years or months. The SQL Server error includes NodaTime's reason, for example "Conversion failed when converting the nvarchar value 'A Period with time units can't be added to a LocalDate.' to data type int".
+
+Things to know:
+
+- **Precision and range:** added to a value, the time units are kept to 100 ns, as a `datetime2` or `time` keeps them. `ToDuration()` goes up to about 292 years, as `Duration` arithmetic in a query does.
+- **Not supported:** `Contains` over a list of periods, comparing a period in a JSON column with one in columns of its own, and periods computed in a query, such as `Period.Between(a, b)` with several units. As for `ZonedDateTime`, `HasData` can't seed a `Period`, and it fails on an owned entity type, saying what to do instead.
+- **How it's mapped:** as a complex type over its ten units. EF Core creates a `Period` with its internal constructor, which takes them. As for `ZonedDateTime`, a property you've mapped yourself keeps your mapping, whether with a value converter or `IgnoreAny<Period>()`.
 
 ## Sponsors
 

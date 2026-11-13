@@ -22,6 +22,7 @@ namespace Microsoft.Extensions.DependencyInjection
                 .TryAdd<IMethodCallTranslatorPlugin, DurationMethodCallTranslatorPlugin>()
                 .TryAdd<IMethodCallTranslatorPlugin, LocalDateTimeMethodCallTranslatorPlugin>()
                 .TryAdd<IMethodCallTranslatorPlugin, OffsetDateTimeMethodCallTranslatorPlugin>()
+                .TryAdd<IMethodCallTranslatorPlugin, PeriodMethodCallTranslatorPlugin>()
                 // Rewrites LocalDate + LocalTime so it can be translated (#48).
                 .TryAdd<IInterceptor, NodaTimeQueryExpressionInterceptor>()
                 // Maps ZonedDateTime properties as complex types (#22).
