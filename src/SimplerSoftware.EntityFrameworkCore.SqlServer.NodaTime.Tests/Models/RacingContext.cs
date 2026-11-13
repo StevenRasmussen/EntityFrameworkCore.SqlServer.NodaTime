@@ -32,6 +32,8 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
 
         public DbSet<DurationStorageTypes> DurationStorageTypes { get; set; }
 
+        public DbSet<ZonedEvent> ZonedEvents { get; set; }
+
         public string Sql => _loggerFactory.Logger.Sql;
 
         protected override void OnConfiguring(DbContextOptionsBuilder options) => options.UseLoggerFactory(_loggerFactory);
@@ -79,6 +81,11 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
                 entity.Property(x => x.DurationAsTimeOf3).HasColumnType("time(3)");
                 entity.Property(x => x.DurationWithPrecision2).HasPrecision(2);
             });
+
+            // The ZonedDateTime properties need no configuration (#22); Schedule is the application's own complex type.
+            modelBuilder.Entity<ZonedEvent>().ComplexProperty(x => x.Schedule).IsRequired();
+            // A fixed-length zone column, which pads the ID with spaces.
+            modelBuilder.Entity<ZonedEvent>().ComplexProperty(x => x.Start, b => b.Property(z => z.Zone).HasColumnType("char(32)"));
 
             modelBuilder.Entity<DurationStorageTypes>(entity =>
             {
@@ -156,6 +163,23 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
         /// Values as written; what comes back is truncated to 100ns for time and datetime2, and to whole seconds for
         /// int, which is why the tests compare query results with .NET's answer for the values read back.
         /// </summary>
+        private static readonly DateTimeZone Paris = DateTimeZoneProviders.Tzdb["Europe/Paris"];
+        private static readonly DateTimeZone NewYork = DateTimeZoneProviders.Tzdb["America/New_York"];
+        private static readonly DateTimeZone Kathmandu = DateTimeZoneProviders.Tzdb["Asia/Kathmandu"];
+
+        /// <summary>
+        /// Summer and winter in Paris, an ambiguous New York time (1:30 on the day the clocks go back, here the earlier
+        /// one, in EDT), Kathmandu's +05:45, and a time with 100ns digits (all a datetimeoffset keeps). EF Core can't seed
+        /// complex properties with HasData, so DatabaseTestFixture inserts these, as ids 1 to 4.
+        /// </summary>
+        public static ZonedEvent[] ZonedEventRows() =>
+        [
+            new() { Start = new LocalDateTime(2024, 7, 1, 10, 0).InZoneStrictly(Paris), End = new LocalDateTime(2024, 7, 1, 12, 30).InZoneStrictly(Paris), HomeZone = Paris, UtcOffset = Offset.FromHours(2), Booked = new OffsetDateTime(new LocalDateTime(2024, 6, 1, 9, 0), Offset.FromHours(2)) },
+            new() { Start = new LocalDateTime(2024, 1, 15, 10, 0, 0, 123).PlusNanoseconds(4500).InZoneStrictly(Paris), HomeZone = Paris, Booked = new OffsetDateTime(new LocalDateTime(2024, 1, 1, 23, 0), Offset.FromHours(-5)) },
+            new() { Start = new LocalDateTime(2024, 11, 3, 1, 30).InZone(NewYork, global::NodaTime.TimeZones.Resolvers.LenientResolver), End = new LocalDateTime(2024, 11, 3, 1, 30).InZone(NewYork, global::NodaTime.TimeZones.Resolvers.LenientResolver).PlusHours(1), UtcOffset = Offset.FromHours(-4), Booked = new OffsetDateTime(new LocalDateTime(2024, 11, 3, 5, 0), Offset.Zero), Schedule = new() { Reminder = new LocalDateTime(2024, 11, 2, 9, 0).InZoneStrictly(NewYork) } },
+            new() { Start = new LocalDateTime(2024, 3, 1, 23, 59, 59).InZoneStrictly(Kathmandu), HomeZone = Kathmandu, UtcOffset = Offset.FromHoursAndMinutes(5, 45), Booked = new OffsetDateTime(new LocalDateTime(2024, 3, 1, 18, 14, 59), Offset.Zero), Schedule = new() { Reminder = new LocalDateTime(2024, 2, 1, 8, 0).InZoneStrictly(Paris) } },
+        ];
+
         public static readonly DurationStorageTypes[] DurationStorageRows =
         [
             new() { Id = 1, Time = Duration.Zero, BigInt = Duration.Zero, Int = Duration.Zero, DateTime2 = Duration.Zero, Text = Duration.Zero },

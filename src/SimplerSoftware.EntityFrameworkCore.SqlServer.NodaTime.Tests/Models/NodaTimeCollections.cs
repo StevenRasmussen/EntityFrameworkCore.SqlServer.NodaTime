@@ -53,5 +53,10 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
 
         /// <summary>Stored as fixed-width text (#38).</summary>
         public Duration DurationAsText { get; set; }
+
+        /// <summary>A JSON object with its OffsetDateTime and Zone (#22).</summary>
+        public ZonedDateTime When { get; set; }
+
+        public ZonedDateTime? MaybeWhen { get; set; }
     }
 }

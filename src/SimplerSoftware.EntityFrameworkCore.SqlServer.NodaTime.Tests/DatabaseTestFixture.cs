@@ -18,6 +18,11 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
             this.DbContext = new RacingContext(this.DbContextOptions);
             this.DbContext.Database.EnsureDeleted();
             this.DbContext.Database.EnsureCreated();
+
+            // EF Core can't seed complex properties (the ZonedDateTime ones) with HasData.
+            this.DbContext.ZonedEvents.AddRange(RacingContext.ZonedEventRows());
+            this.DbContext.SaveChanges();
+            this.DbContext.ChangeTracker.Clear();
         }
 
         public RacingContext DbContext { get; }

@@ -51,6 +51,8 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
 
             public DbSet<DurationStorageTypes> DurationStorageTypes { get; set; }
 
+            public DbSet<ZonedEvent> ZonedEvents { get; set; }
+
             protected override void OnModelCreating(ModelBuilder modelBuilder)
                 => RacingContext.ConfigureMappings(modelBuilder);
         }
@@ -127,6 +129,9 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         {
             null => "null",
             Instant or LocalDateTime or OffsetDateTime or LocalDate or LocalTime or Duration => Iso(value),
+            ZonedDateTime zoned => global::NodaTime.Text.ZonedDateTimePattern.ExtendedFormatOnlyIso.Format(zoned),
+            DateTimeZone zone => zone.Id,
+            Schedule schedule => Format(schedule),
             _ => value.ToString(),
         };
 
@@ -170,6 +175,26 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
             await AssertSameRows(db => db.Set<RaceResult>(), x => x.Id);
             await AssertSameRows(db => db.Set<RaceSplit>(), x => x.Id);
             await AssertSameRows(db => db.Set<DurationStorageTypes>(), x => x.Id);
+            await AssertSameRows(db => db.Set<ZonedEvent>(), x => x.Id);
+        }
+
+        /// <summary>A ZonedDateTime is mapped through its private fields, which the compiled model has to reach too (#22).</summary>
+        [Fact]
+        public async Task ZonedDateTime_queries_give_the_same_results_as_with_the_normal_model()
+        {
+            var instant = Instant.FromUtc(2024, 6, 1, 0, 0);
+            var paris = DateTimeZoneProviders.Tzdb["Europe/Paris"];
+            using var db = CreateContext();
+
+            async Task AssertSame<T>(Func<IQueryable<ZonedEvent>, IQueryable<T>> query)
+                => Assert.Equal(
+                    (await query(this.Db.ZonedEvents).ToListAsync()).Select(v => FormatValue(v)),
+                    (await query(db.Set<ZonedEvent>()).ToListAsync()).Select(v => FormatValue(v)));
+
+            await AssertSame(q => q.Where(x => x.Start.ToInstant() > instant).OrderBy(x => x.Id).Select(x => x.Id));
+            await AssertSame(q => q.OrderBy(x => x.Start.ToInstant()).Select(x => x.Start));
+            await AssertSame(q => q.Where(x => x.Start.Zone == paris).OrderBy(x => x.Id).Select(x => x.Start.LocalDateTime));
+            await AssertSame(q => q.OrderBy(x => x.Id).Select(x => x.Start.Offset));
         }
 
         [Fact]

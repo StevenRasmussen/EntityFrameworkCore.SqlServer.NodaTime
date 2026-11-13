@@ -1,4 +1,5 @@
-﻿using Microsoft.EntityFrameworkCore.SqlServer.Storage;
+﻿using Microsoft.EntityFrameworkCore.SqlServer.Infrastructure;
+using Microsoft.EntityFrameworkCore.SqlServer.Storage;
 using Microsoft.EntityFrameworkCore.Storage;
 using NodaTime;
 using System;
@@ -44,11 +45,31 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
             "national char", "national char varying", "national character", "national character varying", "national text",
         };
 
+        private readonly OffsetTypeMapping _offsetTypeMapping = new OffsetTypeMapping();
+        private readonly IDateTimeZoneProvider _dateTimeZoneProvider;
+
         /// <summary>
-        /// Constructs an instance of the <see cref="SqlServerNodaTimeTypeMappingSourcePlugin"/> class.
+        /// Constructs an instance of the <see cref="SqlServerNodaTimeTypeMappingSourcePlugin"/> class, which reads
+        /// <see cref="DateTimeZone"/> values with the tzdb provider.
         /// </summary>
         public SqlServerNodaTimeTypeMappingSourcePlugin()
+            : this(DateTimeZoneProviders.Tzdb)
         {
+        }
+
+        /// <summary>
+        /// Constructs an instance of the <see cref="SqlServerNodaTimeTypeMappingSourcePlugin"/> class, which reads
+        /// <see cref="DateTimeZone"/> values with the configured provider (UseNodaTime(n =&gt; n.UseDateTimeZoneProvider(...))).
+        /// </summary>
+        public SqlServerNodaTimeTypeMappingSourcePlugin(INodaTimeSingletonOptions options)
+            : this(options.DateTimeZoneProvider)
+        {
+        }
+
+        private SqlServerNodaTimeTypeMappingSourcePlugin(IDateTimeZoneProvider dateTimeZoneProvider)
+        {
+            _dateTimeZoneProvider = dateTimeZoneProvider;
+
             // The order these are added matters.
             // In the case of multiple db types mapping to the same CLR type, 
             // the first CLR type will be the default mapping type when going from CLRType -> DBType
@@ -70,13 +91,32 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
             this.AddTypeMappingToDictionaries(this._durationVarCharTypeMapping);
             this.AddTypeMappingToDictionaries(this._durationNCharTypeMapping);
             this.AddTypeMappingToDictionaries(this._durationCharTypeMapping);
+
+            // A DateTimeZone as its ID (#22): nvarchar(50) by default, or another string type set by the column type.
+            // Only by CLR type: registering "nvarchar(50)" as a store type would hide it from a Duration stored as text.
+            this.ClrTypeMappings.TryAdd(typeof(DateTimeZone), new DateTimeZoneTypeMapping(dateTimeZoneProvider));
+            foreach (var unicode in new[] { true, false })
+            {
+                foreach (var fixedLength in new[] { false, true })
+                {
+                    var storeType = StringStoreType(unicode, fixedLength);
+                    this.StoreTypeMappings[storeType].Add(new DateTimeZoneTypeMapping(dateTimeZoneProvider, storeType, unicode, fixedLength, size: null));
+                }
+            }
+
+            // An Offset as int seconds (#22).
+            this.AddTypeMappingToDictionaries(this._offsetTypeMapping);
             // SQL Server's synonym for int, which EF Core also accepts.
-            this.StoreTypeMappings["integer"] = new List<RelationalTypeMapping> { this._durationIntTypeMapping };
+            this.StoreTypeMappings["integer"] = new List<RelationalTypeMapping> { this._durationIntTypeMapping, this._offsetTypeMapping };
         }
 
         public RelationalTypeMapping FindMapping(in RelationalTypeMappingInfo mappingInfo)
         {
             var clrType = mappingInfo.ClrType;
+
+            // A zone's runtime type is a subclass, such as the one for tzdb zones; a constant in a query has that type.
+            if (clrType != null && clrType != typeof(DateTimeZone) && typeof(DateTimeZone).IsAssignableFrom(clrType))
+                clrType = typeof(DateTimeZone);
             var storeTypeName = mappingInfo.StoreTypeName;
             // "datetime2 (3)" can leave a trailing space on the base name.
             var storeTypeNameBase = mappingInfo.StoreTypeNameBase?.Trim() ?? storeTypeName;
@@ -97,7 +137,7 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
                         if (m.ClrType != clrType)
                             continue;
 
-                        if (m is DurationStringTypeMapping)
+                        if (m is DurationStringTypeMapping or DateTimeZoneTypeMapping)
                             return TextMapping(m, mappingInfo, storeTypeNameBase);
 
                         // HasColumnType("datetime2").HasPrecision(3) means datetime2(3), as it does for EF Core's own types.
@@ -115,7 +155,7 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
 
                     foreach (var m in mappings)
                         if (m.ClrType == clrType)
-                            return m is DurationStringTypeMapping ? TextMapping(m, mappingInfo, storeTypeNameBase) : m.Clone(mappingInfo);
+                            return m is DurationStringTypeMapping or DateTimeZoneTypeMapping ? TextMapping(m, mappingInfo, storeTypeNameBase) : m.Clone(mappingInfo);
 
                     return null;
                 }
@@ -130,6 +170,15 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
             if (clrType == null || !ClrTypeMappings.TryGetValue(clrType, out var mapping))
                 return null;
 
+            // HasMaxLength, IsUnicode(false) or IsFixedLength() without a column type: varchar(32), say.
+            if (mapping is DateTimeZoneTypeMapping && (mappingInfo.Size is > 0 || mappingInfo.IsUnicode == false || mappingInfo.IsFixedLength == true))
+            {
+                var unicode = mappingInfo.IsUnicode ?? true;
+                var fixedLength = mappingInfo.IsFixedLength ?? false;
+                return new DateTimeZoneTypeMapping(
+                    _dateTimeZoneProvider, StringStoreType(unicode, fixedLength), unicode, fixedLength, mappingInfo.Size is > 0 ? mappingInfo.Size : DateTimeZoneTypeMapping.DefaultLength);
+            }
+
             // The default type with the precision: HasPrecision(3) alone gives datetime2(3). With an alias type name, this
             // keeps the default type too: "dbo.UtcTimestamp(3)" wouldn't be valid SQL where the name is used, as in OPENJSON.
             return mappingInfo.Precision.HasValue && mapping.StoreTypePostfix == StoreTypePostfix.Precision
@@ -141,18 +190,22 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
         /// A Duration stored as text needs room for the longest value, <see cref="DurationStringValueConverter.MaxLength"/>
         /// characters. A shorter length is refused like any other unsupported column type, since saving would fail later
         /// (perhaps only for a negative value). No length at all, as in plain "nvarchar" (which SQL Server reads as
-        /// nvarchar(1)), means 28; one from HasMaxLength is kept.
+        /// nvarchar(1)), means 28, or 50 for a DateTimeZone's ID; one from HasMaxLength is kept.
         /// </summary>
         private static RelationalTypeMapping TextMapping(RelationalTypeMapping mapping, in RelationalTypeMappingInfo mappingInfo, string storeTypeNameBase)
         {
-            if (mappingInfo.Size is > 0 and < DurationStringValueConverter.MaxLength)
+            var isDuration = mapping is DurationStringTypeMapping;
+            if (isDuration && mappingInfo.Size is > 0 and < DurationStringValueConverter.MaxLength)
                 return null;
 
             if (mappingInfo.Size == null && !mappingInfo.StoreTypeName.Contains('('))
-                return mapping.WithStoreTypeAndSize(storeTypeNameBase, DurationStringValueConverter.MaxLength);
+                return mapping.WithStoreTypeAndSize(storeTypeNameBase, isDuration ? DurationStringValueConverter.MaxLength : DateTimeZoneTypeMapping.DefaultLength);
 
             return mapping.Clone(mappingInfo);
         }
+
+        private static string StringStoreType(bool unicode, bool fixedLength)
+            => (unicode ? "n" : "") + (fixedLength ? "char" : "varchar");
 
         private void AddTypeMappingToDictionaries(RelationalTypeMapping relationalTypeMapping)
         {
