@@ -149,6 +149,15 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         [MemberData(nameof(Columns))]
         public Task Divide(string column) => AssertSameAsDotNet(column, d => d / 7);
 
+        [Theory]
+        [MemberData(nameof(Columns))]
+        public Task Static_Add(string column) => AssertSameAsDotNet(column, d => Duration.Add(d, Duration.FromHours(25)));
+
+        /// <summary>The column is the second argument, so swapping them would change the sign.</summary>
+        [Theory]
+        [MemberData(nameof(Columns))]
+        public Task Static_Subtract(string column) => AssertSameAsDotNet(column, d => Duration.Subtract(Duration.FromMinutes(90), d));
+
         // Comparisons and ordering
 
         [Theory]
@@ -352,6 +361,17 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         public Task Conditional_of_bigint_and_time_columns()
             => AssertSameAsDotNet(x => true, x => x.Id % 2 == 0 ? x.BigInt : x.Time);
 
+        /// <summary>x.Column ?? value: a value in the column's own storage, so nothing to convert.</summary>
+        [Theory]
+        [MemberData(nameof(Columns))]
+        public Task Coalesce_with_a_value(string column)
+        {
+            var x = Expression.Parameter(typeof(DurationStorageTypes), "x");
+            var selector = Expression.Lambda<Func<DurationStorageTypes, Duration>>(
+                Expression.Coalesce(Expression.Property(x, column), Expression.Constant(Duration.FromMinutes(5))), x);
+            return AssertSameAsDotNet(_ => true, selector);
+        }
+
         [Fact]
         public Task Equals_between_int_and_bigint()
             => AssertSameAsDotNet(x => x.Int != null && x.BigInt != null && x.Int.Value.Equals(x.BigInt.Value), x => x.Id);
@@ -464,6 +484,50 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
                 x => true,
                 s => s.SetProperty(x => x.BigInt, x => x.DateTime2),
                 (before, after) => Assert.Equal(before.DateTime2, after.BigInt));
+
+        /// <summary>A value from the application, written into each storage as saving it would write it.</summary>
+        [Theory]
+        [MemberData(nameof(Columns))]
+        public Task ExecuteUpdate_to_a_parameter(string column)
+        {
+            Duration? value = Duration.FromMinutes(90);
+            Action<UpdateSettersBuilder<DurationStorageTypes>> setters = column switch
+            {
+                nameof(DurationStorageTypes.Time) => s => s.SetProperty(x => x.Time, x => value),
+                nameof(DurationStorageTypes.BigInt) => s => s.SetProperty(x => x.BigInt, x => value),
+                nameof(DurationStorageTypes.Int) => s => s.SetProperty(x => x.Int, x => value),
+                nameof(DurationStorageTypes.DateTime2) => s => s.SetProperty(x => x.DateTime2, x => value),
+                _ => throw new ArgumentOutOfRangeException(nameof(column), column, null),
+            };
+            var property = typeof(DurationStorageTypes).GetProperty(column)!;
+            return AssertExecuteUpdate(x => true, setters, (before, after) => Assert.Equal(value, (Duration?)property.GetValue(after)));
+        }
+
+        /// <summary>Arithmetic in the column's own storage, written back as it is.</summary>
+        [Fact]
+        public Task ExecuteUpdate_bigint_plus_a_duration()
+            => AssertExecuteUpdate(
+                x => true,
+                s => s.SetProperty(x => x.BigInt, x => x.BigInt + Duration.FromHours(1)),
+                (before, after) => Assert.Equal(before.BigInt + Duration.FromHours(1), after.BigInt));
+
+        /// <summary>A Duration column that isn't nullable, as most are.</summary>
+        [Fact]
+        public async Task ExecuteUpdate_a_non_nullable_column()
+        {
+            var options = new DbContextOptionsBuilder<RacingContext>()
+                .UseSqlServer(this.SqlConnection.ConnectionString, x => Microsoft.EntityFrameworkCore.SqlServerDbContextOptionsBuilderExtensions.UseNodaTime(x))
+                .Options;
+            using var db = new RacingContext(options);
+            using var transaction = await db.Database.BeginTransactionAsync();
+            var before = await db.Race.AsNoTracking().OrderBy(x => x.Id).Select(x => x.ScheduledDuration).ToListAsync();
+
+            await db.Race.ExecuteUpdateAsync(s => s.SetProperty(x => x.ScheduledDuration, x => x.ScheduledDuration.PlusMinutes(30)));
+
+            var after = await db.Race.AsNoTracking().OrderBy(x => x.Id).Select(x => x.ScheduledDuration).ToListAsync();
+            Assert.NotEmpty(before);
+            Assert.Equal(before.Select(d => Iso(d + Duration.FromMinutes(30))), after.Select(d => Iso(d)));
+        }
 
         /// <summary>
         /// datetime2 holds about -1899 to +8099 years, far beyond a bigint of nanoseconds (about ±292 years).

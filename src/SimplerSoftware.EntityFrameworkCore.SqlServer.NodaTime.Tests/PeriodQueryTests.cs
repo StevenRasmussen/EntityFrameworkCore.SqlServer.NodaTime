@@ -228,6 +228,24 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         public Task Added_period_is_a_constant()
             => AssertWhereSameAsDotNet(x => x.From.Plus(Period.FromWeeks(1)) > new LocalDateTime(2024, 3, 7, 0, 0));
 
+        /// <summary>A parameter subtracted is added with each unit negated, so a sign mistake would move the other way.</summary>
+        [Fact]
+        public async Task Subtracted_period_is_a_parameter()
+        {
+            var period = Period.FromMonths(1) + Period.FromDays(3) + Period.FromHours(25);
+            var time = Period.FromMinutes(-90);
+            await AssertSelectSameAsDotNet(x => x.From - period);
+            await AssertSelectSameAsDotNet(x => x.At.Minus(time));
+        }
+
+        /// <summary>A constant subtracted becomes negated literals.</summary>
+        [Fact]
+        public async Task Subtracted_period_is_a_constant()
+        {
+            await AssertSelectSameAsDotNet(x => x.From.Minus(Period.FromMonths(1) + Period.FromDays(3) + Period.FromHours(25)));
+            await AssertSelectSameAsDotNet(x => x.FromDate - Period.FromDays(40));
+        }
+
         [Fact]
         public async Task OrderBy_a_unit()
         {
