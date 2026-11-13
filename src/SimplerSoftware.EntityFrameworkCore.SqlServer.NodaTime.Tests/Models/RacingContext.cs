@@ -30,21 +30,34 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
 
         public DbSet<NodaTimeCollections> NodaTimeCollections { get; set; }
 
+        public DbSet<DurationStorageTypes> DurationStorageTypes { get; set; }
+
         public string Sql => _loggerFactory.Logger.Sql;
 
         protected override void OnConfiguring(DbContextOptionsBuilder options) => options.UseLoggerFactory(_loggerFactory);
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
-            // The list properties need no configuration; EF Core maps them to JSON arrays by convention.
-            // No seed data: the tests insert their own rows inside a transaction that is rolled back.
-            modelBuilder.Entity<NodaTimeCollections>()
-                .ComplexProperty(x => x.Json, b => b.ToJson());
+            ConfigureMappings(modelBuilder);
+            SeedData(modelBuilder);
+        }
 
-            modelBuilder.Entity<SupportedNodaTypes>()
-                .HasData(
-                    CreateSupportedNodaTypes(1, withNullables: true),
-                    CreateSupportedNodaTypes(2, withNullables: false));
+        /// <summary>The column configuration without the seed data. CompiledModelTests builds its compiled model from this too.</summary>
+        public static void ConfigureMappings(ModelBuilder modelBuilder)
+        {
+            // EF Core maps the list properties to JSON arrays by convention; DurationsInNanoseconds stores its elements
+            // as bigint (#38). No seed data here: the tests insert their own rows inside a transaction that is rolled back.
+            modelBuilder.Entity<NodaTimeCollections>(entity =>
+            {
+                entity.PrimitiveCollection(x => x.DurationsInNanoseconds).ElementType().HasStoreType("bigint");
+                entity.ComplexProperty(x => x.Json, b =>
+                {
+                    b.ToJson();
+                    b.Property(x => x.DurationAsBigInt).HasColumnType("bigint");
+                    b.Property(x => x.DurationAsDateTime2).HasColumnType("datetime2");
+                    b.Property(x => x.DurationAsText).HasColumnType("nvarchar(28)");
+                });
+            });
 
             modelBuilder.Entity<PrecisionNodaTypes>(entity =>
             {
@@ -65,11 +78,30 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
                 entity.Property(x => x.LocalTimeWithPrecision2).HasPrecision(2);
                 entity.Property(x => x.DurationAsTimeOf3).HasColumnType("time(3)");
                 entity.Property(x => x.DurationWithPrecision2).HasPrecision(2);
+            });
 
-                entity.HasData(
+            modelBuilder.Entity<DurationStorageTypes>(entity =>
+            {
+                entity.Property(x => x.BigInt).HasColumnType("bigint");
+                entity.Property(x => x.Int).HasColumnType("int");
+                entity.Property(x => x.DateTime2).HasColumnType("datetime2");
+                entity.Property(x => x.Text).HasColumnType("nvarchar(28)");
+            });
+        }
+
+        private static void SeedData(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<SupportedNodaTypes>()
+                .HasData(
+                    CreateSupportedNodaTypes(1, withNullables: true),
+                    CreateSupportedNodaTypes(2, withNullables: false));
+
+            modelBuilder.Entity<PrecisionNodaTypes>()
+                .HasData(
                     CreatePrecisionNodaTypes(1, new LocalDateTime(2019, 1, 1, 8, 0)),
                     CreatePrecisionNodaTypes(2, new LocalDateTime(2019, 7, 1, 14, 30)));
-            });
+
+            modelBuilder.Entity<DurationStorageTypes>().HasData(DurationStorageRows);
 
             modelBuilder.Entity<Race>()
                 .HasData(
@@ -116,6 +148,28 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
                     new RaceSplit { Id = 9, TimeStampInstant = InstantExtensions.FromParts(2020, 1, 1, 9, 9, 9, 9, 9, 9), TimeStampLocalDateTime = LocalDateTimeExtensions.FromParts(2020, 1, 1, 9, 9, 9, 9, 9, 9), TimeStampLocalTime = LocalTimeExtensions.FromParts(9, 9, 9, 9, 9, 900), TimeStampOffsetDateTime = OffsetDateTimeExtensions.FromParts(2020, 1, 1, 9, 9, 9, 9, 9, 900, 300) }
                 );
         }
+
+        private static readonly Duration WithNanoseconds = Duration.FromHours(1) + Duration.FromMinutes(30) + Duration.FromSeconds(15) + Duration.FromNanoseconds(123_456_789);
+        public static readonly Duration NegativeWithFraction = -(Duration.FromHours(26) + Duration.FromMinutes(3) + Duration.FromMilliseconds(500));
+
+        /// <summary>
+        /// Values as written; what comes back is truncated to 100ns for time and datetime2, and to whole seconds for
+        /// int, which is why the tests compare query results with .NET's answer for the values read back.
+        /// </summary>
+        public static readonly DurationStorageTypes[] DurationStorageRows =
+        [
+            new() { Id = 1, Time = Duration.Zero, BigInt = Duration.Zero, Int = Duration.Zero, DateTime2 = Duration.Zero, Text = Duration.Zero },
+            new() { Id = 2, Time = Duration.FromHours(1), BigInt = Duration.FromHours(1), Int = Duration.FromHours(1), DateTime2 = Duration.FromHours(1), Text = Duration.FromHours(1) },
+            new() { Id = 3, Time = WithNanoseconds, BigInt = WithNanoseconds, Int = WithNanoseconds, DateTime2 = WithNanoseconds, Text = WithNanoseconds },
+            new() { Id = 4, Time = Duration.FromDays(1) - Duration.FromNanoseconds(100), BigInt = Duration.FromDays(1) - Duration.Epsilon, Int = Duration.FromDays(1) - Duration.Epsilon, DateTime2 = Duration.FromDays(1) - Duration.Epsilon, Text = Duration.FromDays(1) - Duration.Epsilon },
+            new() { Id = 5 },
+            new() { Id = 6, Time = Duration.FromHours(12), BigInt = Duration.FromHours(25), Int = Duration.FromHours(25), DateTime2 = Duration.FromHours(25), Text = Duration.FromHours(25) },
+            new() { Id = 7, BigInt = NegativeWithFraction, Int = NegativeWithFraction, DateTime2 = NegativeWithFraction, Text = NegativeWithFraction },
+            new() { Id = 8, Time = Duration.FromHours(23), BigInt = Duration.FromDays(100) + Duration.Epsilon, Int = Duration.FromDays(100), DateTime2 = Duration.FromDays(100) + Duration.Epsilon, Text = Duration.FromDays(100) + Duration.Epsilon },
+            new() { Id = 9, BigInt = -Duration.FromMilliseconds(1500), Int = -Duration.FromMilliseconds(1500), DateTime2 = -Duration.FromMilliseconds(1500), Text = -Duration.FromMilliseconds(1500) },
+            new() { Id = 10, Time = Duration.FromHours(6), BigInt = Duration.FromDays(100 * 365), DateTime2 = Duration.FromDays(100 * 365), Text = Duration.FromDays(100 * 365) },
+            new() { Id = 11, Time = Duration.FromMinutes(30), BigInt = -Duration.FromMinutes(30), Int = Duration.FromMinutes(30), DateTime2 = -Duration.FromMinutes(30), Text = -Duration.FromMinutes(30) },
+        ];
 
         /// <summary>Row 1 has every nullable property populated; row 2 has every nullable property null.</summary>
         private static SupportedNodaTypes CreateSupportedNodaTypes(int id, bool withNullables) => new SupportedNodaTypes

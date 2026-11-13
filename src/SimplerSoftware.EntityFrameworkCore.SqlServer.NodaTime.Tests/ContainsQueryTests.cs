@@ -164,6 +164,58 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
             AssertResult(mode, db, [2], ids);
         }
 
+        /// <summary>
+        /// A Duration stored as bigint (nanoseconds) or int (seconds) (#38): the list goes as JSON numbers, or as
+        /// numeric literals. See RacingContext.DurationStorageRows: row 6 holds 25 hours, row 9 -1.5s (int: -1s).
+        /// </summary>
+        [Theory]
+        [MemberData(nameof(Modes))]
+        public async Task Duration_stored_as_bigint_Contains(string mode)
+        {
+            var values = new[] { Duration.FromHours(25), -Duration.FromMilliseconds(1500), Duration.FromHours(3) };
+            using var db = CreateContext(mode);
+
+            var ids = await db.DurationStorageTypes.Where(x => values.Contains(x.BigInt.Value)).Select(x => x.Id).OrderBy(id => id).ToListAsync();
+
+            AssertResult(mode, db, [6, 9], ids, constantStart: "CAST(90000000000000 AS bigint)");
+        }
+
+        [Theory]
+        [MemberData(nameof(Modes))]
+        public async Task Duration_stored_as_int_Contains(string mode)
+        {
+            var values = new[] { Duration.FromHours(25), Duration.FromSeconds(-1), Duration.FromHours(3) };
+            using var db = CreateContext(mode);
+
+            var ids = await db.DurationStorageTypes.Where(x => values.Contains(x.Int.Value)).Select(x => x.Id).OrderBy(id => id).ToListAsync();
+
+            AssertResult(mode, db, [6, 9], ids, constantStart: "90000");
+        }
+
+        [Theory]
+        [MemberData(nameof(Modes))]
+        public async Task Duration_stored_as_datetime2_Contains(string mode)
+        {
+            var values = new[] { Duration.FromHours(25), -Duration.FromMilliseconds(1500), Duration.FromHours(3) };
+            using var db = CreateContext(mode);
+
+            var ids = await db.DurationStorageTypes.Where(x => values.Contains(x.DateTime2.Value)).Select(x => x.Id).OrderBy(id => id).ToListAsync();
+
+            AssertResult(mode, db, [6, 9], ids, constantStart: "'1900-01-02T01:00:00");
+        }
+
+        [Theory]
+        [MemberData(nameof(Modes))]
+        public async Task Duration_stored_as_text_Contains(string mode)
+        {
+            var values = new[] { Duration.FromHours(25), -Duration.FromMilliseconds(1500), Duration.FromHours(3) };
+            using var db = CreateContext(mode);
+
+            var ids = await db.DurationStorageTypes.Where(x => values.Contains(x.Text.Value)).Select(x => x.Id).OrderBy(id => id).ToListAsync();
+
+            AssertResult(mode, db, [6, 9], ids, constantStart: "N'00000001:01:00:00.000000000'");
+        }
+
         [Fact]
         public async Task Contains_with_empty_list_returns_nothing()
         {
@@ -195,7 +247,7 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         /// <summary>
         /// Checks the rows, and that the SQL used the requested translation (so a mode can't silently fall back to another).
         /// </summary>
-        private static void AssertResult(string mode, RacingContext db, int[] expectedIds, List<int> actualIds)
+        private static void AssertResult(string mode, RacingContext db, int[] expectedIds, List<int> actualIds, string constantStart = "'")
         {
             Assert.Equal(expectedIds, actualIds);
 
@@ -209,7 +261,7 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
                     Assert.True(sql.Contains(" IN (@") && !sql.Contains("OPENJSON"), sql);
                     break;
                 case nameof(ParameterTranslationMode.Constant):
-                    Assert.True(sql.Contains(" IN ('") && !sql.Contains("OPENJSON"), sql);
+                    Assert.True(sql.Contains(" IN (" + constantStart) && !sql.Contains("OPENJSON"), sql);
                     break;
             }
         }

@@ -21,8 +21,6 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
         // date + time; NodaTimeQueryExpressionInterceptor turns the operator into a call to this method.
         internal static readonly MethodInfo LocalDatePlusLocalTime = typeof(LocalDate).GetRuntimeMethod("op_Addition", new[] { typeof(LocalDate), typeof(LocalTime) });
 
-        private static readonly bool[] _dateDiffPropagatesNullability = { false, false, true };
-        private static readonly bool[] _dateAddPropagatesNullability = { false, true, true };
 
         private readonly ISqlExpressionFactory _sqlExpressionFactory;
 
@@ -61,14 +59,14 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
                 "DATEDIFF",
                 new SqlExpression[] { new SqlFragmentExpression("day"), new SqlFragmentExpression("'19000101'"), date },
                 nullable: true,
-                argumentsPropagateNullability: _dateDiffPropagatesNullability,
+                argumentsPropagateNullability: SqlServerFunctionNullability.DateDiffFrom1900,
                 typeof(int));
 
             return _sqlExpressionFactory.Function(
                 "DATEADD",
                 new SqlExpression[] { new SqlFragmentExpression("day"), daysSince1900, timeAsDateTime2 },
                 nullable: true,
-                argumentsPropagateNullability: _dateAddPropagatesNullability,
+                argumentsPropagateNullability: SqlServerFunctionNullability.DateAddOrDiff,
                 typeof(LocalDateTime),
                 timeAsDateTime2.TypeMapping);
         }

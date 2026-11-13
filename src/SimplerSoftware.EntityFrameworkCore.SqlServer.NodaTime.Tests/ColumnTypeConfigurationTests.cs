@@ -59,10 +59,13 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         /// the column was created with the configured type.
         /// </summary>
         [Theory]
-        [InlineData(nameof(Entity.Duration), "bigint")]
-        [InlineData(nameof(Entity.Duration), "int")]
-        [InlineData(nameof(Entity.Duration), "nvarchar(40)")]
-        [InlineData(nameof(Entity.Duration), "datetime2")]
+        [InlineData(nameof(Entity.Duration), "smallint")]
+        [InlineData(nameof(Entity.Duration), "decimal(20, 0)")]
+        [InlineData(nameof(Entity.Duration), "uniqueidentifier")]
+        // Text shorter than the longest stored value (28 characters) would fail when saving, perhaps only for a negative value.
+        [InlineData(nameof(Entity.Duration), "nvarchar(27)")]
+        [InlineData(nameof(Entity.Duration), "char(10)")]
+        [InlineData(nameof(Entity.Duration), "datetime")]
         [InlineData(nameof(Entity.Instant), "nvarchar(40)")]
         [InlineData(nameof(Entity.Instant), "BIGINT")]
         [InlineData(nameof(Entity.Date), "int")]
@@ -89,6 +92,16 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
             Assert.Equal(expectedStoreType, mapping.StoreType);
         }
 
+        /// <summary>
+        /// With HasPrecision, an alias type gets the default type with that precision. Putting the precision on the alias
+        /// name, as in "dbo.UtcTimestamp(3)", isn't valid SQL, and SQL Server only uses this name in queries (CAST, OPENJSON).
+        /// </summary>
+        [Fact]
+        public void Alias_type_with_precision_keeps_the_default_type()
+        {
+            Assert.Equal("datetime2(3)", MappingOf(nameof(Entity.Instant), "dbo.UtcTimestamp", precision: 3).StoreType);
+        }
+
         [Theory]
         [InlineData(nameof(Entity.Instant), "DATETIME2", "datetime2")]
         [InlineData(nameof(Entity.Instant), "DateTime", "datetime")]
@@ -110,6 +123,7 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         [InlineData(nameof(Entity.Instant), "datetime2", "datetime2(3)")]
         [InlineData(nameof(Entity.Instant), "DATETIME2", "datetime2(3)")]
         [InlineData(nameof(Entity.Duration), "time", "time(3)")]
+        [InlineData(nameof(Entity.Duration), "datetime2", "datetime2(3)")]
         // These take no precision; datetime(3) or smalldatetime(3) would be invalid SQL.
         [InlineData(nameof(Entity.Date), "date", "date")]
         [InlineData(nameof(Entity.Instant), "datetime", "datetime")]

@@ -11,6 +11,8 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="11.0.0" />
+    <!-- For CompiledModelTests: generates a compiled model as 'dotnet ef dbcontext optimize' does, and compiles it (Roslyn). -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="11.0.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.12.0" />
     <PackageReference Include="NodaTime" Version="3.3.7" />
     <!-- mtp-off: run via VSTest (xunit.runner.visualstudio) so plain `dotnet test` and coverlet.collector keep working. -->
