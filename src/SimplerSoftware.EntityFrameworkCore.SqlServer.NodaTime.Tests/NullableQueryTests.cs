@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.SqlServer.NodaTime.Extensions;
 using NodaTime;
+using System.Linq;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -31,6 +32,43 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
             Assert.Equal(1, count);
         }
 
+        // EF Core's C# null semantics: a part of a NULL value is NULL, and NULL != x is true, so row 2 (all NULL)
+        // matches. EF Core does the same for DateTime?.Value.Year. These SQL functions used to be marked as never
+        // NULL, which left row 2 out.
+
+        [Fact]
+        public async Task Nullable_member_not_equal_includes_null()
+        {
+            var ids = await this.Db.TypeResults.Where(t => t.LocalDateNull.Value.Year != 2000).Select(t => t.Id).ToListAsync();
+
+            Assert.Equal(
+                condense("SELECT [t].[Id] FROM [TypeResults] AS [t] WHERE DATEPART(year, [t].[LocalDateNull]) <> 2000 OR [t].[LocalDateNull] IS NULL"),
+                condense(this.Db.Sql));
+            Assert.Equal([2], ids);
+        }
+
+        [Fact]
+        public async Task Nullable_method_not_equal_includes_null()
+        {
+            var ids = await this.Db.TypeResults.Where(t => t.LocalDateNull.Value.PlusDays(1) != new LocalDate(2000, 3, 1)).Select(t => t.Id).ToListAsync();
+
+            Assert.Equal(
+                condense("SELECT [t].[Id] FROM [TypeResults] AS [t] WHERE DATEADD(day, CAST(1 AS int), [t].[LocalDateNull]) <> '2000-03-01' OR [t].[LocalDateNull] IS NULL"),
+                condense(this.Db.Sql));
+            Assert.Equal([2], ids);
+        }
+
+        [Fact]
+        public async Task Nullable_DateDiff_not_equal_includes_null()
+        {
+            var ids = await this.Db.TypeResults.Where(t => EF.Functions.DateDiffDay(t.LocalDateNull, new LocalDate(2000, 3, 1)) != 1).Select(t => t.Id).ToListAsync();
+
+            Assert.Equal(
+                condense("SELECT [t].[Id] FROM [TypeResults] AS [t] WHERE DATEDIFF(DAY, [t].[LocalDateNull], '2000-03-01') <> 1 OR [t].[LocalDateNull] IS NULL"),
+                condense(this.Db.Sql));
+            Assert.Equal([2], ids);
+        }
+
         [Fact]
         public async Task Nullable_Duration_member()
         {
@@ -45,7 +83,7 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         {
             var count = await this.Db.TypeResults.CountAsync(t => t.DurationNull.Value.PlusHours(1) == Duration.FromMinutes(150));
 
-            Assert.Equal(condense($"{CountStatement} WHERE DATEADD(hour, CAST(1.0E0 AS int), [t].[DurationNull]) = '02:30:00'"), condense(this.Db.Sql));
+            Assert.Equal(condense($"{CountStatement} WHERE DATEDIFF_BIG(nanosecond, '19000101', [t].[DurationNull]) + CAST(1.0E0 * 3600000000000.0E0 AS bigint) = CAST(9000000000000 AS bigint)"), condense(this.Db.Sql));
             Assert.Equal(1, count);
         }
 

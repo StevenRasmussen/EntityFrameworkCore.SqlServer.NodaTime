@@ -13,14 +13,20 @@ namespace Microsoft.EntityFrameworkCore
         /// <returns>The options builder so that further configuration can be chained.</returns>
         public static SqlServerDbContextOptionsBuilder UseNodaTime(
             this SqlServerDbContextOptionsBuilder optionsBuilder)
+            => UseNodaTime(optionsBuilder, nodaTimeOptionsAction: null);
+
+        /// <summary>
+        /// Enable NodaTime mappings, with options: for example
+        /// <c>UseNodaTime(n =&gt; n.UseDateTimeZoneProvider(DateTimeZoneProviders.Bcl))</c>.
+        /// </summary>
+        /// <param name="optionsBuilder">The build being used to configure SQL Server.</param>
+        /// <param name="nodaTimeOptionsAction">Configures the NodaTime options.</param>
+        /// <returns>The options builder so that further configuration can be chained.</returns>
+        public static SqlServerDbContextOptionsBuilder UseNodaTime(
+            this SqlServerDbContextOptionsBuilder optionsBuilder,
+            Action<NodaTimeDbContextOptionsBuilder> nodaTimeOptionsAction)
         {
-            var coreOptionsBuilder = ((IRelationalDbContextOptionsBuilderInfrastructure)optionsBuilder).OptionsBuilder;
-
-            var extension = coreOptionsBuilder.Options.FindExtension<NodaTimeOptionsExtension>()
-                ?? new NodaTimeOptionsExtension();
-
-            ((IDbContextOptionsBuilderInfrastructure)coreOptionsBuilder).AddOrUpdateExtension(extension);
-
+            NodaTimeOptionsExtension.AddOrUpdate(((IRelationalDbContextOptionsBuilderInfrastructure)optionsBuilder).OptionsBuilder, nodaTimeOptionsAction);
             return optionsBuilder;
         }
     }

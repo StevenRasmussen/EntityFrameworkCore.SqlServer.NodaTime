@@ -137,5 +137,53 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
 
             Assert.Contains("[r].[ScheduledDuration] >", sql);
         }
+
+        private const string CombinedDateAndTime = "DATEADD(day, DATEDIFF(day, '19000101', [r].[Date]), CAST([r].[ScheduledStartTime] AS datetime2))";
+
+        [Fact]
+        public void LocalDate_At_LocalTime_translates()
+        {
+            using var db = CreateContext();
+            var sql = db.Race.Where(r => r.Date.At(r.ScheduledStartTime) > new LocalDateTime(2019, 6, 1, 0, 0)).ToQueryString();
+
+            Assert.Contains(CombinedDateAndTime, sql);
+        }
+
+        [Fact]
+        public void LocalTime_On_LocalDate_translates()
+        {
+            using var db = CreateContext();
+            var sql = db.Race.Where(r => r.ScheduledStartTime.On(r.Date) > new LocalDateTime(2019, 6, 1, 0, 0)).ToQueryString();
+
+            Assert.Contains(CombinedDateAndTime, sql);
+        }
+
+        /// <summary>Relies on UseNodaTime() registering the query interceptor that rewrites the + operator.</summary>
+        [Fact]
+        public void LocalDate_plus_LocalTime_translates()
+        {
+            using var db = CreateContext();
+            var sql = db.Race.Where(r => r.Date + r.ScheduledStartTime > new LocalDateTime(2019, 6, 1, 0, 0)).ToQueryString();
+
+            Assert.Contains(CombinedDateAndTime, sql);
+        }
+
+        [Fact]
+        public void LocalDate_AtMidnight_translates()
+        {
+            using var db = CreateContext();
+            var sql = db.Race.Where(r => r.Date.AtMidnight() > new LocalDateTime(2019, 6, 1, 0, 0)).ToQueryString();
+
+            Assert.Contains("CAST([r].[Date] AS datetime2) >", sql);
+        }
+
+        [Fact]
+        public void LocalDateTime_TimeOfDay_translates()
+        {
+            using var db = CreateContext();
+            var sql = db.Race.Where(r => r.ScheduledStart.TimeOfDay > new LocalTime(12, 0)).ToQueryString();
+
+            Assert.Contains("CAST([r].[ScheduledStart] AS time) >", sql);
+        }
     }
 }

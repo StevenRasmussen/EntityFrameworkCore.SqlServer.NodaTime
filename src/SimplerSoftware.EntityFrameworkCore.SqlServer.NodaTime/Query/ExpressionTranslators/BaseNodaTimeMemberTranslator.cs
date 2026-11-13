@@ -14,11 +14,6 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
         private readonly ISqlExpressionFactory _sqlExpressionFactory;
         private readonly Dictionary<string, string> _datePartMapping;
         private readonly Type _declaringType;
-        private static List<bool> _argumentsPropagateNullability = new List<bool>
-        {
-            false,
-            false,
-        };
 
         public BaseNodaTimeMemberTranslator([NotNull] ISqlExpressionFactory sqlExpressionFactory, [NotNull] Type declaringType, [NotNull] Dictionary<string, string> datePartMapping)
         {
@@ -28,7 +23,7 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
         }
 
 
-        public SqlExpression Translate(SqlExpression instance, MemberInfo member, Type returnType, IDiagnosticsLogger<DbLoggerCategory.Query> logger)
+        public virtual SqlExpression Translate(SqlExpression instance, MemberInfo member, Type returnType, IDiagnosticsLogger<DbLoggerCategory.Query> logger)
         {
             if (member.DeclaringType == this._declaringType)
             {
@@ -39,13 +34,17 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Query.ExpressionTranslators
                     return _sqlExpressionFactory.Function(
                         "DATEPART",
                         new[] { new SqlFragmentExpression(datePart), instance },
-                        false,
-                        _argumentsPropagateNullability,
+                        nullable: true,
+                        SqlServerFunctionNullability.DatePart,
                         returnType);
                 }
                 else if (member.Name == nameof(LocalDateTime.Date) && returnType == typeof(LocalDate))
                 {
                     return _sqlExpressionFactory.Convert(instance, typeof(LocalDate));
+                }
+                else if (member.Name == nameof(LocalDateTime.TimeOfDay) && returnType == typeof(LocalTime))
+                {
+                    return _sqlExpressionFactory.Convert(instance, typeof(LocalTime));
                 }
             }
 

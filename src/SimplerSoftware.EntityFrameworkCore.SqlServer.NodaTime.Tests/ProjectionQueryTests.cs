@@ -73,7 +73,7 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
                 .SingleAsync();
 
             Assert.Equal(
-                condense("SELECT TOP(2) [r].[ScheduledDuration], DATEPART(hour, [r].[ScheduledDuration]) AS [Hours], DATEADD(hour, CAST(1.0E0 AS int), [r].[ScheduledDuration]) AS [Longer] FROM [Race] AS [r] WHERE [r].[Id] = 7"),
+                condense("SELECT TOP(2) [r].[ScheduledDuration], DATEPART(hour, [r].[ScheduledDuration]) AS [Hours], DATEDIFF_BIG(nanosecond, '19000101', [r].[ScheduledDuration]) + CAST(1.0E0 * 3600000000000.0E0 AS bigint) AS [Longer] FROM [Race] AS [r] WHERE [r].[Id] = 7"),
                 condense(this.Db.Sql));
 
             Assert.Equal(Iso(DurationExtensions.FromParts(7, 6, 6, 6)), Iso(result.ScheduledDuration));

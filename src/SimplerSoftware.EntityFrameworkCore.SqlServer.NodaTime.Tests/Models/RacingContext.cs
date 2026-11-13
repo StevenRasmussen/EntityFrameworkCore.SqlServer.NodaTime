@@ -30,21 +30,38 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
 
         public DbSet<NodaTimeCollections> NodaTimeCollections { get; set; }
 
+        public DbSet<DurationStorageTypes> DurationStorageTypes { get; set; }
+
+        public DbSet<ZonedEvent> ZonedEvents { get; set; }
+
+        public DbSet<PeriodEvent> PeriodEvents { get; set; }
+
         public string Sql => _loggerFactory.Logger.Sql;
 
         protected override void OnConfiguring(DbContextOptionsBuilder options) => options.UseLoggerFactory(_loggerFactory);
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
-            // The list properties need no configuration; EF Core maps them to JSON arrays by convention.
-            // No seed data: the tests insert their own rows inside a transaction that is rolled back.
-            modelBuilder.Entity<NodaTimeCollections>()
-                .ComplexProperty(x => x.Json, b => b.ToJson());
+            ConfigureMappings(modelBuilder);
+            SeedData(modelBuilder);
+        }
 
-            modelBuilder.Entity<SupportedNodaTypes>()
-                .HasData(
-                    CreateSupportedNodaTypes(1, withNullables: true),
-                    CreateSupportedNodaTypes(2, withNullables: false));
+        /// <summary>The column configuration without the seed data. CompiledModelTests builds its compiled model from this too.</summary>
+        public static void ConfigureMappings(ModelBuilder modelBuilder)
+        {
+            // EF Core maps the list properties to JSON arrays by convention; DurationsInNanoseconds stores its elements
+            // as bigint (#38). No seed data here: the tests insert their own rows inside a transaction that is rolled back.
+            modelBuilder.Entity<NodaTimeCollections>(entity =>
+            {
+                entity.PrimitiveCollection(x => x.DurationsInNanoseconds).ElementType().HasStoreType("bigint");
+                entity.ComplexProperty(x => x.Json, b =>
+                {
+                    b.ToJson();
+                    b.Property(x => x.DurationAsBigInt).HasColumnType("bigint");
+                    b.Property(x => x.DurationAsDateTime2).HasColumnType("datetime2");
+                    b.Property(x => x.DurationAsText).HasColumnType("nvarchar(28)");
+                });
+            });
 
             modelBuilder.Entity<PrecisionNodaTypes>(entity =>
             {
@@ -65,11 +82,38 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
                 entity.Property(x => x.LocalTimeWithPrecision2).HasPrecision(2);
                 entity.Property(x => x.DurationAsTimeOf3).HasColumnType("time(3)");
                 entity.Property(x => x.DurationWithPrecision2).HasPrecision(2);
+            });
 
-                entity.HasData(
+            // The ZonedDateTime properties need no configuration (#22); Schedule is the application's own complex type.
+            modelBuilder.Entity<ZonedEvent>().ComplexProperty(x => x.Schedule).IsRequired();
+            // A fixed-length zone column, which pads the ID with spaces.
+            modelBuilder.Entity<ZonedEvent>().ComplexProperty(x => x.Start, b => b.Property(z => z.Zone).HasColumnType("char(32)"));
+
+            modelBuilder.Entity<PeriodEvent>().ComplexProperty(x => x.Every).IsRequired();
+            modelBuilder.Entity<PeriodEvent>().ComplexProperty(x => x.Rule).IsRequired();
+
+            modelBuilder.Entity<DurationStorageTypes>(entity =>
+            {
+                entity.Property(x => x.BigInt).HasColumnType("bigint");
+                entity.Property(x => x.Int).HasColumnType("int");
+                entity.Property(x => x.DateTime2).HasColumnType("datetime2");
+                entity.Property(x => x.Text).HasColumnType("nvarchar(28)");
+            });
+        }
+
+        private static void SeedData(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<SupportedNodaTypes>()
+                .HasData(
+                    CreateSupportedNodaTypes(1, withNullables: true),
+                    CreateSupportedNodaTypes(2, withNullables: false));
+
+            modelBuilder.Entity<PrecisionNodaTypes>()
+                .HasData(
                     CreatePrecisionNodaTypes(1, new LocalDateTime(2019, 1, 1, 8, 0)),
                     CreatePrecisionNodaTypes(2, new LocalDateTime(2019, 7, 1, 14, 30)));
-            });
+
+            modelBuilder.Entity<DurationStorageTypes>().HasData(DurationStorageRows);
 
             modelBuilder.Entity<Race>()
                 .HasData(
@@ -116,6 +160,87 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models
                     new RaceSplit { Id = 9, TimeStampInstant = InstantExtensions.FromParts(2020, 1, 1, 9, 9, 9, 9, 9, 9), TimeStampLocalDateTime = LocalDateTimeExtensions.FromParts(2020, 1, 1, 9, 9, 9, 9, 9, 9), TimeStampLocalTime = LocalTimeExtensions.FromParts(9, 9, 9, 9, 9, 900), TimeStampOffsetDateTime = OffsetDateTimeExtensions.FromParts(2020, 1, 1, 9, 9, 9, 9, 9, 900, 300) }
                 );
         }
+
+        private static readonly Duration WithNanoseconds = Duration.FromHours(1) + Duration.FromMinutes(30) + Duration.FromSeconds(15) + Duration.FromNanoseconds(123_456_789);
+        public static readonly Duration NegativeWithFraction = -(Duration.FromHours(26) + Duration.FromMinutes(3) + Duration.FromMilliseconds(500));
+
+        /// <summary>
+        /// Values as written; what comes back is truncated to 100ns for time and datetime2, and to whole seconds for
+        /// int, which is why the tests compare query results with .NET's answer for the values read back.
+        /// </summary>
+        private static readonly DateTimeZone Paris = DateTimeZoneProviders.Tzdb["Europe/Paris"];
+        private static readonly DateTimeZone NewYork = DateTimeZoneProviders.Tzdb["America/New_York"];
+        private static readonly DateTimeZone Kathmandu = DateTimeZoneProviders.Tzdb["Asia/Kathmandu"];
+
+        /// <summary>
+        /// Summer and winter in Paris, an ambiguous New York time (1:30 on the day the clocks go back, here the earlier
+        /// one, in EDT), Kathmandu's +05:45, and a time with 100ns digits (all a datetimeoffset keeps). EF Core can't seed
+        /// complex properties with HasData, so DatabaseTestFixture inserts these, as ids 1 to 4.
+        /// </summary>
+        /// <summary>Inserted by the test fixture: HasData can't seed a complex type.</summary>
+        public static PeriodEvent[] PeriodEventRows() =>
+        [
+            // Years, then months: 2024-02-29 plus a year is 2025-02-28, then plus a month, 2025-03-28.
+            new()
+            {
+                Every = Period.FromYears(1) + Period.FromMonths(1), Shift = Period.FromHours(8),
+                From = new LocalDateTime(2024, 2, 29, 23, 30), Until = new LocalDateTime(2025, 3, 28, 23, 29, 59),
+                FromDate = new LocalDate(2024, 2, 29), UntilDate = new LocalDate(2025, 3, 28),
+                At = new LocalTime(23, 30), UntilTime = new LocalTime(1, 0),
+                Rule = new() { Name = "yearly", Every = Period.FromYears(1) },
+            },
+            // Odd units, kept as they are: a day, minus an hour, 90 minutes, 3 ticks and 200ns. Ends before it starts.
+            new()
+            {
+                Every = new PeriodBuilder { Days = 1, Hours = -1, Minutes = 90, Ticks = 3, Nanoseconds = 200 }.Build(),
+                Grace = Period.FromWeeks(2), Shift = Period.FromMinutes(-90),
+                From = new LocalDateTime(2024, 1, 31, 10, 0), Until = new LocalDateTime(2023, 12, 31, 9, 0),
+                FromDate = new LocalDate(2024, 1, 31), UntilDate = new LocalDate(2023, 1, 31),
+                At = new LocalTime(10, 0), UntilTime = new LocalTime(9, 0),
+                Rule = new() { Name = "odd", Every = new PeriodBuilder { Hours = 25, Seconds = -1 }.Build() },
+            },
+            // Time units only, more than a day of them.
+            new()
+            {
+                Every = Period.FromHours(36), Grace = Period.FromDays(3), Shift = new PeriodBuilder { Hours = 25, Minutes = 30 }.Build(),
+                From = new LocalDateTime(2024, 12, 31, 23, 0), Until = new LocalDateTime(2026, 1, 1, 0, 0),
+                FromDate = new LocalDate(2024, 12, 31), UntilDate = new LocalDate(2024, 3, 1),
+                At = new LocalTime(23, 0), UntilTime = new LocalTime(23, 0, 0, 1),
+                Rule = new() { Name = "none" },
+            },
+            // Negative units, and a zero period.
+            new()
+            {
+                Every = new PeriodBuilder { Months = -1, Days = -5 }.Build(), Grace = Period.Zero,
+                From = new LocalDateTime(2024, 3, 31, 0, 0), Until = new LocalDateTime(2024, 3, 31, 0, 0),
+                FromDate = new LocalDate(2024, 3, 31), UntilDate = new LocalDate(2020, 2, 29),
+                At = new LocalTime(0, 0), UntilTime = new LocalTime(0, 0).PlusNanoseconds(100),
+                Rule = new() { Name = "zero", Every = Period.Zero },
+            },
+        ];
+
+        public static ZonedEvent[] ZonedEventRows() =>
+        [
+            new() { Start = new LocalDateTime(2024, 7, 1, 10, 0).InZoneStrictly(Paris), End = new LocalDateTime(2024, 7, 1, 12, 30).InZoneStrictly(Paris), HomeZone = Paris, UtcOffset = Offset.FromHours(2), Booked = new OffsetDateTime(new LocalDateTime(2024, 6, 1, 9, 0), Offset.FromHours(2)) },
+            new() { Start = new LocalDateTime(2024, 1, 15, 10, 0, 0, 123).PlusNanoseconds(4500).InZoneStrictly(Paris), HomeZone = Paris, Booked = new OffsetDateTime(new LocalDateTime(2024, 1, 1, 23, 0), Offset.FromHours(-5)) },
+            new() { Start = new LocalDateTime(2024, 11, 3, 1, 30).InZone(NewYork, global::NodaTime.TimeZones.Resolvers.LenientResolver), End = new LocalDateTime(2024, 11, 3, 1, 30).InZone(NewYork, global::NodaTime.TimeZones.Resolvers.LenientResolver).PlusHours(1), UtcOffset = Offset.FromHours(-4), Booked = new OffsetDateTime(new LocalDateTime(2024, 11, 3, 5, 0), Offset.Zero), Schedule = new() { Reminder = new LocalDateTime(2024, 11, 2, 9, 0).InZoneStrictly(NewYork) } },
+            new() { Start = new LocalDateTime(2024, 3, 1, 23, 59, 59).InZoneStrictly(Kathmandu), HomeZone = Kathmandu, UtcOffset = Offset.FromHoursAndMinutes(5, 45), Booked = new OffsetDateTime(new LocalDateTime(2024, 3, 1, 18, 14, 59), Offset.Zero), Schedule = new() { Reminder = new LocalDateTime(2024, 2, 1, 8, 0).InZoneStrictly(Paris) } },
+        ];
+
+        public static readonly DurationStorageTypes[] DurationStorageRows =
+        [
+            new() { Id = 1, Time = Duration.Zero, BigInt = Duration.Zero, Int = Duration.Zero, DateTime2 = Duration.Zero, Text = Duration.Zero },
+            new() { Id = 2, Time = Duration.FromHours(1), BigInt = Duration.FromHours(1), Int = Duration.FromHours(1), DateTime2 = Duration.FromHours(1), Text = Duration.FromHours(1) },
+            new() { Id = 3, Time = WithNanoseconds, BigInt = WithNanoseconds, Int = WithNanoseconds, DateTime2 = WithNanoseconds, Text = WithNanoseconds },
+            new() { Id = 4, Time = Duration.FromDays(1) - Duration.FromNanoseconds(100), BigInt = Duration.FromDays(1) - Duration.Epsilon, Int = Duration.FromDays(1) - Duration.Epsilon, DateTime2 = Duration.FromDays(1) - Duration.Epsilon, Text = Duration.FromDays(1) - Duration.Epsilon },
+            new() { Id = 5 },
+            new() { Id = 6, Time = Duration.FromHours(12), BigInt = Duration.FromHours(25), Int = Duration.FromHours(25), DateTime2 = Duration.FromHours(25), Text = Duration.FromHours(25) },
+            new() { Id = 7, BigInt = NegativeWithFraction, Int = NegativeWithFraction, DateTime2 = NegativeWithFraction, Text = NegativeWithFraction },
+            new() { Id = 8, Time = Duration.FromHours(23), BigInt = Duration.FromDays(100) + Duration.Epsilon, Int = Duration.FromDays(100), DateTime2 = Duration.FromDays(100) + Duration.Epsilon, Text = Duration.FromDays(100) + Duration.Epsilon },
+            new() { Id = 9, BigInt = -Duration.FromMilliseconds(1500), Int = -Duration.FromMilliseconds(1500), DateTime2 = -Duration.FromMilliseconds(1500), Text = -Duration.FromMilliseconds(1500) },
+            new() { Id = 10, Time = Duration.FromHours(6), BigInt = Duration.FromDays(100 * 365), DateTime2 = Duration.FromDays(100 * 365), Text = Duration.FromDays(100 * 365) },
+            new() { Id = 11, Time = Duration.FromMinutes(30), BigInt = -Duration.FromMinutes(30), Int = Duration.FromMinutes(30), DateTime2 = -Duration.FromMinutes(30), Text = -Duration.FromMinutes(30) },
+        ];
 
         /// <summary>Row 1 has every nullable property populated; row 2 has every nullable property null.</summary>
         private static SupportedNodaTypes CreateSupportedNodaTypes(int id, bool withNullables) => new SupportedNodaTypes
