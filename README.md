@@ -1,4 +1,4 @@
-![.NET Core](https://github.com/StevenRasmussen/EFCore.SqlServer.NodaTime/workflows/.NET%20Core/badge.svg?branch=master)
+![.NET Core](https://github.com/StevenRasmussen/EntityFrameworkCore.SqlServer.NodaTime/actions/workflows/dotnetcore.yml/badge.svg?branch=master)
 [![NuGet version (EFCore.SqlServer.NodaTime)](https://img.shields.io/nuget/v/SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.svg)](https://www.nuget.org/packages/SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime/)
 
 # EntityFrameworkCore.SqlServer.NodaTime
@@ -7,7 +7,51 @@ Adds native support to EntityFrameworkCore for SQL Server for the [NodaTime](htt
 
 Read more at [Learn Entity Framework Core](https://www.learnentityframeworkcore.com/extensions/entityframeworkcore-sqlserver-nodatime)
 
-[Version History](https://www.learnentityframeworkcore.com/extensions/entityframeworkcore-sqlserver-nodatime#version-history)
+[Version History](https://github.com/StevenRasmussen/EntityFrameworkCore.SqlServer.NodaTime#version-history)
+
+## Getting started
+
+Install the NuGet package. Its major and minor version follow EF Core's, so for EF Core 11 use 11.x:
+
+```shell
+dotnet add package SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime
+```
+
+For an earlier EF Core, give its version, such as `--version 10.0.1` for EF Core 10.
+
+Then call `UseNodaTime()` where you configure SQL Server or Azure SQL:
+
+```csharp
+options.UseSqlServer(connectionString, x => x.UseNodaTime());
+options.UseAzureSql(connectionString, x => x.UseNodaTime());
+```
+
+With `UseInternalServiceProvider`, also add NodaTime's services to that service provider:
+
+```csharp
+services.AddEntityFrameworkSqlServer().AddNodaTime();
+```
+
+## Supported types
+
+| NodaTime type | Stored as | Other column types |
+|---|---|---|
+| `Instant` | `datetime2` | `datetime`, `smalldatetime` |
+| `LocalDateTime` | `datetime2` | `datetime`, `smalldatetime` |
+| `LocalDate` | `date` | |
+| `LocalTime` | `time` | |
+| `OffsetDateTime` | `datetimeoffset` | |
+| `Duration` | `time`, which holds 0 to under 24 hours | `bigint`, `int`, `datetime2` or text, for longer and negative durations (new in 11.0.1): see [Storing a Duration](https://github.com/StevenRasmussen/EntityFrameworkCore.SqlServer.NodaTime#storing-a-duration) |
+| `ZonedDateTime` (new in 11.0.1) | two columns: `datetimeoffset`, and the zone ID in `nvarchar(50)` | another string type for the zone: see [ZonedDateTime, DateTimeZone and Offset](https://github.com/StevenRasmussen/EntityFrameworkCore.SqlServer.NodaTime#zoneddatetime-datetimezone-and-offset) |
+| `DateTimeZone` (new in 11.0.1) | its ID, in `nvarchar(50)` | another string type |
+| `Offset` (new in 11.0.1) | its seconds, in `int` | |
+| `Period` (new in 11.0.1) | its units as JSON, in `nvarchar(max)`: see [Period](https://github.com/StevenRasmussen/EntityFrameworkCore.SqlServer.NodaTime#period) | |
+
+Choose another column type with `HasColumnType`, or for every property of a type with `Properties<T>().HaveColumnType(...)` in `ConfigureConventions`. `HasPrecision` sets the precision of a `datetime2`, `datetimeoffset` or `time` column.
+
+`list.Contains(x.Property)` works for all of these except `ZonedDateTime` and `Period`. Values of the first six types can also be stored in a list property or a JSON column, and a `ZonedDateTime` or `Period` can go in a JSON column too, as their sections describe.
+
+The query translations for the first six types, including the `DATEADD`, `DATEPART` and `DATEDIFF` functions, are described at [Learn Entity Framework Core](https://www.learnentityframeworkcore.com/extensions/entityframeworkcore-sqlserver-nodatime). The new types and storage options are described below.
 
 ## Storing a Duration
 
@@ -139,7 +183,48 @@ Things to know:
 
 [Entity Framework Extensions](https://entityframework-extensions.net/) and [Dapper Plus](https://dapper-plus.net/) are major sponsors and proud to contribute to the development of **EFCore.SqlServer.NodaTime**.
 
-[![Entity Framework Extensions](https://raw.githubusercontent.com/StevenRasmussen/EFCore.SqlServer.NodaTime/master/entity-framework-extensions-sponsor.png)](https://entityframework-extensions.net/bulk-insert)
+[![Entity Framework Extensions](https://raw.githubusercontent.com/StevenRasmussen/EntityFrameworkCore.SqlServer.NodaTime/master/entity-framework-extensions-sponsor.png)](https://entityframework-extensions.net/bulk-insert)
 
-[![Dapper Plus](https://raw.githubusercontent.com/StevenRasmussen/EFCore.SqlServer.NodaTime/master/dapper-plus-sponsor.png)](https://dapper-plus.net/bulk-insert)
+[![Dapper Plus](https://raw.githubusercontent.com/StevenRasmussen/EntityFrameworkCore.SqlServer.NodaTime/master/dapper-plus-sponsor.png)](https://dapper-plus.net/bulk-insert)
+
+## Version History
+
+### 11.0.1 (November 13, 2026)
+
+#### New
+
+- **`ZonedDateTime`, `DateTimeZone` and `Offset` properties** ([#22](https://github.com/StevenRasmussen/EntityFrameworkCore.SqlServer.NodaTime/issues/22)). A `ZonedDateTime` needs no configuration: it is stored in two columns, its `datetimeoffset` and its zone ID. Queries can compare and order by `ToInstant()`, which uses an index on the `datetimeoffset` column, and can use `==`, `LocalDateTime`, `Offset`, `Zone` and the date and time parts. Zone IDs are looked up in tzdb, or in another provider set with `UseNodaTime(n => n.UseDateTimeZoneProvider(...))`. A `DateTimeZone` is stored as its ID and an `Offset` as its seconds, and `list.Contains(x.Property)` works for both. See [ZonedDateTime, DateTimeZone and Offset](https://github.com/StevenRasmussen/EntityFrameworkCore.SqlServer.NodaTime#zoneddatetime-datetimezone-and-offset).
+- **`OffsetDateTime`** translates `ToInstant()`, `LocalDateTime` and `Offset`.
+- **`Period` properties** ([#3](https://github.com/StevenRasmussen/EntityFrameworkCore.SqlServer.NodaTime/issues/3)). A `Period` needs no configuration: it is stored as JSON, keeping all ten of its units as they are. Queries can compare periods, read their units, add them to a `LocalDateTime`, `LocalDate` or `LocalTime`, use `ToDuration()`, and work out one unit between two values, such as an age. See [Period](https://github.com/StevenRasmussen/EntityFrameworkCore.SqlServer.NodaTime#period).
+- **Durations of 24 hours or more, and negative ones** ([#38](https://github.com/StevenRasmussen/EntityFrameworkCore.SqlServer.NodaTime/issues/38)). A `Duration` can be stored as `bigint`, `int`, `datetime2` or text, chosen with `HasColumnType`. `time` stays the default. See [Storing a Duration](https://github.com/StevenRasmussen/EntityFrameworkCore.SqlServer.NodaTime#storing-a-duration).
+- **`list.Contains(x.Property)`** works for `Instant`, `LocalDateTime`, `LocalDate`, `LocalTime`, `OffsetDateTime` and `Duration`, and values of those types can be stored in list properties and JSON columns ([#41](https://github.com/StevenRasmussen/EntityFrameworkCore.SqlServer.NodaTime/issues/41)).
+- **Combining a date and a time** translates: `date.At(time)`, `time.On(date)`, `date + time` and `date.AtMidnight()`. So does `TimeOfDay` on a `LocalDateTime` or `OffsetDateTime` ([#48](https://github.com/StevenRasmussen/EntityFrameworkCore.SqlServer.NodaTime/issues/48)).
+- **Duration arithmetic** translates for every storage, `time` included: `+`, `-`, `Plus`, `Minus`, unary `-`, and `*` or `/` by a whole number.
+- **A new warning**, `SqlServerNodaTimeEventId.DurationValueTruncatedToSeconds`, is logged when a query compares an `int` Duration column with a parameter, or with a constant that has a fraction of a second. Both are truncated to whole seconds.
+
+#### Fixed
+
+- `Duration.Days` produced SQL that SQL Server rejects.
+- `PlusHours`, `PlusMinutes` and the other `PlusX` methods on a `time` Duration wrapped around at 24 hours and dropped any fraction of the amount.
+- `HasPrecision` after a column type was ignored. `HasColumnType("datetime2").HasPrecision(3)` is now `datetime2(3)`.
+- A built-in column type that can't hold a NodaTime value, such as `HasColumnType("bigint")` on an `Instant`, was silently ignored. It now gives EF Core's "could not be mapped" error.
+- Column type names are matched regardless of case, so `HasColumnType("DATETIME2")` works. `HasColumnType("DateTime")` on an `Instant` had been mapped to `datetime2`; it is now `datetime`.
+- Comparing a part of a nullable value, as in `x.NullableDate.Value.Year != 2000`, left out the rows where the value is NULL. They are now included, as EF Core does for `DateTime`.
+- An alias column type with `HasPrecision`, such as `HasColumnType("dbo.UtcTimestamp").HasPrecision(3)`, produced invalid SQL in `Contains` queries.
+
+#### Behavior changes to check when upgrading
+
+- **`PlusX` on a `time` Duration** is now computed in nanoseconds. `PlusHours(1.5)` adds 90 minutes, where it used to add 1 hour. A result of 24 hours or more is kept instead of wrapping around. The SQL uses `DATEDIFF_BIG` and integer arithmetic instead of `DATEADD`.
+- **`ExecuteUpdate`** that writes a value of 24 hours or more, or a negative one, into a `time` column now fails, as `SaveChanges` does. It used to wrap the value around silently.
+- **`!=` on a part of a nullable value** now matches rows where the value is NULL. The SQL gains `OR [column] IS NULL`.
+- **An unsupported built-in column type** on a NodaTime property now fails when the model is built, instead of being ignored. A name that isn't a built-in type, such as a user-defined alias type, still gets the default mapping.
+
+### 11.0.0 (November 12, 2026)
+
+- Release for EF Core 11.
+- `HasPrecision` on an `OffsetDateTime`, `LocalTime` or `Duration` now sets the column's precision, such as `datetimeoffset(3)`; it had been ignored, so the column was always `datetimeoffset(7)` or `time(7)`. On an existing database, check the next migration you add: it may change the column.
+- NodaTime 3.3.7 or later is required, up from 3.2.2.
+- JetBrains.Annotations is no longer a package dependency.
+
+Earlier versions are listed at [Learn Entity Framework Core](https://www.learnentityframeworkcore.com/extensions/entityframeworkcore-sqlserver-nodatime#version-history).
 
