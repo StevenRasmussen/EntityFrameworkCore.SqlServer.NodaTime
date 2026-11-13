@@ -260,6 +260,7 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
             AssertNotTranslated(q => q.Where(x => x.Text * 2 == value));
             AssertNotTranslated(q => q.Where(x => x.Text == x.BigInt));
             AssertNotTranslated(q => q.Where(x => (x.Text ?? x.BigInt) == value));
+            AssertNotTranslated(q => q.Where(x => (x.Id % 2 == 0 ? x.Text : x.BigInt) == value));
             AssertNotTranslated(q => q.Where(x => SqlServerNodaTimeDbFunctionsExtensions.DateDiffHour(EF.Functions, x.Text, x.BigInt) == 1));
         }
 

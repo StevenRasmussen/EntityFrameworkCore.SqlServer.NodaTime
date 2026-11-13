@@ -77,6 +77,35 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
         [Fact]
         public Task Instant_before_a_parameter_written_the_other_way_round() => AssertWhereSameAsDotNet(x => June2024 > x.Start.ToInstant());
 
+        public static TheoryData<string> Operators => new("<", "<=", ">", ">=", "==", "!=");
+
+        /// <summary>
+        /// With the instant on the left, the column is compared with it the other way round (instant &lt; column becomes
+        /// column &gt; instant). The instant is exactly the first row's, so a wrong operator gives other rows.
+        /// </summary>
+        [Theory]
+        [MemberData(nameof(Operators))]
+        public async Task Instant_on_the_left(string op)
+        {
+            var row = RacingContext.ZonedEventRows()[0];
+            var booked = row.Booked.ToInstant();
+            var start = row.Start.ToInstant();
+            (Expression<Func<ZonedEvent, bool>> Booked, Expression<Func<ZonedEvent, bool>> Start, string Sql) comparison = op switch
+            {
+                "<" => (x => booked < x.Booked.ToInstant(), x => start < x.Start.ToInstant(), ">"),
+                "<=" => (x => booked <= x.Booked.ToInstant(), x => start <= x.Start.ToInstant(), ">="),
+                ">" => (x => booked > x.Booked.ToInstant(), x => start > x.Start.ToInstant(), "<"),
+                ">=" => (x => booked >= x.Booked.ToInstant(), x => start >= x.Start.ToInstant(), "<="),
+                "==" => (x => booked == x.Booked.ToInstant(), x => start == x.Start.ToInstant(), "="),
+                _ => (x => booked != x.Booked.ToInstant(), x => start != x.Start.ToInstant(), "<>"),
+            };
+
+            await AssertWhereSameAsDotNet(comparison.Booked);
+            await AssertWhereSameAsDotNet(comparison.Start);
+            Assert.Contains($"WHERE [z].[Booked] {comparison.Sql} @booked", this.Db.ZonedEvents.Where(comparison.Booked).ToQueryString());
+            Assert.Contains($"WHERE [z].[Start] {comparison.Sql} @start", this.Db.ZonedEvents.Where(comparison.Start).ToQueryString());
+        }
+
         [Fact]
         public Task Instant_equal_to_another_columns_instant() => AssertWhereSameAsDotNet(x => x.Start.ToInstant() == x.Booked.ToInstant());
 
