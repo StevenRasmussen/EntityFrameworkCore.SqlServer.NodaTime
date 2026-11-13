@@ -64,6 +64,50 @@ migrationBuilder.RenameColumn(name: "LengthNanoseconds", table: "Races", newName
 
 For `int`, use `AddColumn<int>`, `type: "int"`, `defaultValue: 0` and `DATEDIFF(second, '00:00:00', [Length])`. For text, use `AddColumn<string>`, `type: "nvarchar(28)"`, `defaultValue: ""` and `N'00000000:' + CONVERT(nvarchar(16), CAST([Length] AS time(7))) + N'00'`. For a nullable property, use `nullable: true` and leave out `defaultValue`.
 
+## ZonedDateTime, DateTimeZone and Offset
+
+A `ZonedDateTime` property needs no configuration. It is stored in two columns, named the way EF Core names a complex type's:
+
+| Column | Type | Holds |
+|---|---|---|
+| `Start` | `datetimeoffset` | the local date and time with its offset, so the exact instant |
+| `Start_Zone` | `nvarchar(50)` | the time zone ID, such as `Europe/Paris` |
+
+A `ZonedDateTime?` gets nullable columns, and one inside your own complex type gets its path, such as `Schedule_Reminder` and `Schedule_Reminder_Zone`. A `DateTimeZone` property is stored as its ID in `nvarchar(50)`, or in another string type set with `HasColumnType`. An `Offset` is stored as its seconds in an `int`.
+
+To store a `ZonedDateTime`'s zone in another string type (tzdb IDs are at most 32 characters), use `HasColumnType`, or `HasMaxLength` and `IsUnicode(false)`:
+
+```csharp
+modelBuilder.Entity<Event>().ComplexProperty(x => x.Start, b => b.Property(z => z.Zone).HasColumnType("varchar(32)"));
+```
+
+Time zone IDs are looked up in the tzdb provider. To use another one, such as the operating system's zones:
+
+```csharp
+options.UseSqlServer(connectionString, x => x.UseNodaTime(n => n.UseDateTimeZoneProvider(DateTimeZoneProviders.Bcl)));
+```
+
+Pass the same provider instance every time, as `DateTimeZoneProviders.Tzdb` and `.Bcl` are: EF Core builds its internal services for each instance. With `UseInternalServiceProvider`, every context using that service provider must use the same time zone provider.
+
+Queries can use:
+
+- `==` (the same instant in the same zone) and `== null`;
+- `ToInstant()`, in comparisons and ordering. A comparison with an `Instant` compares the `datetimeoffset` column itself, so an index on it can be used. NodaTime has no `<` or `>` for `ZonedDateTime`, so compare `ToInstant()`;
+- `ToOffsetDateTime()`, `LocalDateTime`, `Offset`, `Zone`, `Zone.Id`, and `Year`, `Hour`, `Date` and the other parts of the local date and time.
+
+`ToInstant()`, `LocalDateTime` and `Offset` now translate for an `OffsetDateTime` property too.
+
+Things to know:
+
+- **Precision:** 100 ns, as for any `datetimeoffset`. Only the ISO calendar is kept, as for the other NodaTime types.
+- **Time zone rules:** if a zone's rules change after a value was saved (a new tzdb release, for example), the value read back keeps the offset and instant it was saved with.
+- **Zone IDs:** values must be read with the provider they were saved with. A zone ID the provider doesn't know fails when the value is read. A compiled model only supports the tzdb and BCL providers.
+- **JSON columns:** in a JSON column, a `ZonedDateTime` is an object with its `OffsetDateTime` and `Zone`, and the same queries work. A list of `ZonedDateTime` values isn't supported.
+- **Seeding:** `HasData` can't seed a `ZonedDateTime`, since EF Core can't seed complex types.
+- **Methods in a projection:** EF Core can't run a method on a `ZonedDateTime` (or any struct complex type) at the end of a query, such as `Select(x => x.Start.WithZone(zone))`. Select the `ZonedDateTime` and call the method afterwards.
+- **A default `ZonedDateTime`** (0001-01-01, with no zone set) is saved and read back as UTC, the zone NodaTime gives it.
+- **How it's mapped:** through `ZonedDateTime`'s two private fields, its `OffsetDateTime` and its zone. A property you've already mapped yourself, for example with a value converter, keeps your mapping.
+
 ## Sponsors
 
 [Entity Framework Extensions](https://entityframework-extensions.net/) and [Dapper Plus](https://dapper-plus.net/) are major sponsors and proud to contribute to the development of **EFCore.SqlServer.NodaTime**.

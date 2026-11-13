@@ -8,17 +8,17 @@ public static class AzureSqlDbContextOptionsBuilderExtensions
 {
     public static AzureSqlDbContextOptionsBuilder UseNodaTime(
         this AzureSqlDbContextOptionsBuilder azureBuilder)
+        => UseNodaTime(azureBuilder, nodaTimeOptionsAction: null);
+
+    /// <summary>
+    /// Enable NodaTime mappings, with options: for example
+    /// <c>UseNodaTime(n =&gt; n.UseDateTimeZoneProvider(DateTimeZoneProviders.Bcl))</c>.
+    /// </summary>
+    public static AzureSqlDbContextOptionsBuilder UseNodaTime(
+        this AzureSqlDbContextOptionsBuilder azureBuilder,
+        System.Action<NodaTimeDbContextOptionsBuilder> nodaTimeOptionsAction)
     {
-        // Access the underlying OptionsBuilder
-        var coreOptionsBuilder = ((IRelationalDbContextOptionsBuilderInfrastructure)azureBuilder).OptionsBuilder;
-
-        // Look for the NodaTime extension or create a new instance if not found
-        var extension = coreOptionsBuilder.Options.FindExtension<NodaTimeOptionsExtension>()
-            ?? new NodaTimeOptionsExtension();
-
-        // Add or update the extension in the options
-        ((IDbContextOptionsBuilderInfrastructure)coreOptionsBuilder).AddOrUpdateExtension(extension);
-
+        NodaTimeOptionsExtension.AddOrUpdate(((IRelationalDbContextOptionsBuilderInfrastructure)azureBuilder).OptionsBuilder, nodaTimeOptionsAction);
         return azureBuilder;
     }
 }
