@@ -128,7 +128,8 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Storage
                     // When clrType is null, defer to EF Core's default mapping source: our store
                     // types (datetime, datetime2, etc.) all have non-NodaTime defaults that EF
                     // can supply. Returning a NodaTime mapping here pollutes plain DateTime
-                    // expressions like DateTime.UtcNow with InstantValueConverter.
+                    // expressions like DateTime.UtcNow with InstantValueConverter (#52).
+                    // Scaffolding gets NodaTime types from SqlServerNodaTimeScaffoldingTypeMappingSourcePlugin.
                     if (clrType == null)
                         return null;
 
