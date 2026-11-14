@@ -1,5 +1,3 @@
-using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -10,8 +8,6 @@ using NodaTime;
 using SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Design;
 using SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests.Models;
 using System;
-using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
@@ -87,34 +83,7 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Tests
             var generator = serviceProvider.GetRequiredService<ICompiledModelCodeGeneratorSelector>().Select(options);
             var files = generator.GenerateModel(context.GetService<IDesignTimeModel>().Model, options);
 
-            // The assemblies the test runs with (the framework and the packages), and the ones the generated code uses.
-            var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES"))
-                .Split(Path.PathSeparator)
-                .Concat(new[]
-                {
-                    typeof(CompiledModelContext).Assembly.Location,
-                    typeof(SqlServerNodaTimeDesignTimeServices).Assembly.Location,
-                    typeof(Duration).Assembly.Location,
-                    typeof(DbContext).Assembly.Location,
-                    typeof(RelationalDatabaseFacadeExtensions).Assembly.Location,
-                    providerAssembly.Location,
-                })
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Select(path => MetadataReference.CreateFromFile(path));
-            var compilation = CSharpCompilation.Create(
-                "CompiledModelTestsGenerated",
-                files.Select(f => CSharpSyntaxTree.ParseText(f.Code, path: f.Path)),
-                references,
-                new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
-
-            using var assembly = new MemoryStream();
-            var result = compilation.Emit(assembly);
-            Assert.True(
-                result.Success,
-                "The generated compiled model doesn't compile:" + Environment.NewLine
-                + string.Join(Environment.NewLine, result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error)));
-
-            var modelType = Assembly.Load(assembly.ToArray()).GetType($"{options.ModelNamespace}.{nameof(CompiledModelContext)}Model");
+            var modelType = GeneratedCode.Compile("CompiledModelTestsGenerated", files).GetType($"{options.ModelNamespace}.{nameof(CompiledModelContext)}Model");
             return (IModel)modelType!.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)!.GetValue(null);
         }
 
