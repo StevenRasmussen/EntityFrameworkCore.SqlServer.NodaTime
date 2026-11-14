@@ -1,7 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Scaffolding;
-using System.Reflection;
 
 namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Design
 {
@@ -9,7 +9,8 @@ namespace SimplerSoftware.EntityFrameworkCore.SqlServer.NodaTime.Design
     {
         public override MethodCallCodeFragment GenerateProviderOptions()
         {
-            var methodInfo = typeof(SqlServerDbContextOptionsBuilderExtensions).GetMethod(nameof(SqlServerDbContextOptionsBuilderExtensions.UseNodaTime), BindingFlags.Public | BindingFlags.Static);
+            // UseNodaTime() without options: there's an overload that takes them.
+            var methodInfo = typeof(SqlServerDbContextOptionsBuilderExtensions).GetMethod(nameof(SqlServerDbContextOptionsBuilderExtensions.UseNodaTime), [typeof(SqlServerDbContextOptionsBuilder)]);
             return new MethodCallCodeFragment(methodInfo);
         }
     }
